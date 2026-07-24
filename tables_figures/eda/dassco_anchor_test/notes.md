@@ -81,3 +81,38 @@ OCR won't find text there) while excluding it from the connected-component
 mask is what keeps detection robust. Re-validated on the same 20 images:
 `y2` unchanged (2133-2217, same as before), `x1` now starts ~300px earlier
 (~1800-1870 vs ~2150-2220), snug against the DaSSCo card on visual review.
+
+## Follow-up: rotation correction, also anchored on DaSSCo
+
+User's idea: since DaSSCo detection is reliable, also use it to measure and
+correct any rotation/tilt of the mount, deterministically, before computing
+the ROI. Implemented via `cv2.minAreaRect` on the DaSSCo blob's own pixel
+coordinates (not just its axis-aligned bbox) to get its true rotation angle.
+
+Caveat checked first: the DaSSCo card is nearly square (1515x1495px, ~1%
+difference), which can make rotation angle detection ambiguous/unstable near
+45 degree symmetry - but measured angles across all 20 real images were tiny
+(0.00-0.29 degrees) and consistent, so this wasn't an issue in practice for
+real, near-straight photos.
+
+Sign convention calibrated empirically (not assumed): applied a synthetic
++/-3 degree rotation to an already-straight image (`1709018.jpeg`) via
+`cv2.getRotationMatrix2D`/`warpAffine`, then re-measured. Applying +3 degrees
+(counterclockwise) produced a measured angle of -2.97; applying -3 produced
++3.03. Conclusion: for an image with measured angle A, the correction to
+apply is A itself (not -A) - `cv2.getRotationMatrix2D(center, A, 1.0)`
+straightens it. `detect_labels.py`'s `_deskew()` implements exactly this,
+skipped below 0.05 degrees (measurement noise on an already-straight photo).
+
+Validated with a harder synthetic case: rotated `1709018.jpeg` by -4 degrees
+(a much bigger tilt than anything seen in the real 20-image sample), ran the
+full `find_search_roi` on that tilted image. Detected correction angle:
+3.99 (matches the expected 4.0). `synthetic_rotation_input.jpeg` (visibly
+tilted) vs `synthetic_rotation_corrected.jpeg` (mount perfectly horizontal
+again, ROI box aligned to it - the surrounding background looks tilted
+instead, which is expected and irrelevant since only the cropped ROI is used
+downstream).
+
+`find_search_roi` and `get_search_crop` both live in `src/detect_labels.py`;
+the former returns `(angle, (x1,y1,x2,y2))`, the latter does deskew+crop in
+one step and returns the actual image data ready for Task 6's OCR.

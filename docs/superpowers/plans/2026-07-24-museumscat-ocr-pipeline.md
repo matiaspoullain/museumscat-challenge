@@ -504,13 +504,27 @@ true size, so it can't distinguish a shifted mount from a scaled one, and
 - Output for review: `tables_figures/eda/detection_review/*.jpeg` (annotated
   previews, gitignored — derived from raw images)
 
+One more addition after the above was validated: the mount isn't always
+perfectly level in-frame. Since the DaSSCo detection is reliable, it doubles
+as the rotation reference too — `cv2.minAreaRect` on its pixel coordinates
+gives the tilt angle, calibrated empirically (not assumed) against synthetic
++/-3 degree test rotations: for a measured angle A, the correction to apply
+is A itself via `cv2.getRotationMatrix2D`. Validated with a harder synthetic
+-4 degree tilt: detected correction was 3.99, and the deskewed mount came out
+level (`tables_figures/eda/dassco_anchor_test/synthetic_rotation_*.jpeg`).
+Real images in the 20-sample only had 0.00-0.29 degrees of tilt, so this is
+mostly future-proofing against outliers elsewhere in the 3500.
+
 **Interfaces:**
 - Consumes: EDA notes from Task 2 (furniture column x-boundary).
-- Produces: `find_search_roi(image_path: str) -> tuple[int, int, int, int]`
-  returning one `(x1, y1, x2, y2)` box in original-image pixel coordinates
-  bounding the mount surface where cards live, furniture column and specimen
-  area excluded. Task 6's OCR engine runs its own text detector over this one
-  crop per image (not per-card crops — that distinction no longer exists).
+- Produces: `find_search_roi(image_path: str) -> tuple[float, tuple[int, int, int, int]]`
+  returning the rotation angle to apply (`cv2.getRotationMatrix2D` convention)
+  and one `(x1, y1, x2, y2)` box valid on the rotated image, bounding the
+  mount surface where cards live, furniture column and specimen area
+  excluded. Also `get_search_crop(image_path: str) -> np.ndarray` — deskew
+  and crop in one step, the actual pixel data Task 6 runs OCR on. Task 6's
+  OCR engine runs its own text detector over this one crop per image (not
+  per-card crops — that distinction no longer exists).
 
 ```python
 # src/detect_labels.py
@@ -525,12 +539,17 @@ FURNITURE_X_RATIO = 1.21  # furniture_x = dassco_x + ratio * dassco_width
 BRIGHTNESS_THRESHOLD = 140
 OPEN_KERNEL = 21
 PADDING = 30
+MIN_ROTATION_DEG = 0.05  # below this, it's measurement noise, not real tilt
+
+
+def _dassco_mask(img):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, DASSCO_HSV_LOW, DASSCO_HSV_HIGH)
+    return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((DASSCO_OPEN_KERNEL, DASSCO_OPEN_KERNEL), np.uint8))
 
 
 def _dassco_bbox(img):
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, DASSCO_HSV_LOW, DASSCO_HSV_HIGH)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((DASSCO_OPEN_KERNEL, DASSCO_OPEN_KERNEL), np.uint8))
+    mask = _dassco_mask(img)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     if n <= 1:
         return None
@@ -539,8 +558,35 @@ def _dassco_bbox(img):
     return (x, y, w, h)
 
 
+def _dassco_rotation_angle(img):
+    mask = _dassco_mask(img)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 1:
+        return 0.0
+    largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    ys, xs = np.where(labels == largest)
+    pts = np.column_stack([xs, ys]).astype(np.float32)
+    _, _, angle = cv2.minAreaRect(pts)
+    while angle <= -45:
+        angle += 90
+    while angle > 45:
+        angle -= 90
+    return angle
+
+
+def _deskew(img):
+    angle = _dassco_rotation_angle(img)
+    if abs(angle) < MIN_ROTATION_DEG:
+        return img, 0.0
+    h, w = img.shape[:2]
+    matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    rotated = cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_LINEAR, borderValue=(255, 255, 255))
+    return rotated, angle
+
+
 def find_search_roi(image_path):
     img = cv2.imread(image_path)
+    img, angle = _deskew(img)
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -560,25 +606,32 @@ def find_search_roi(image_path):
 
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     if n <= 1:
-        return (report_x1, 0, w, h)
+        return angle, (report_x1, 0, w, h)
     largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
     mount = labels == largest
     mount[:, :safe_cut] = False
 
     ys, xs = np.where(mount)
     if len(xs) == 0:
-        return (report_x1, 0, w, h)
+        return angle, (report_x1, 0, w, h)
 
     x1 = max(0, report_x1 - PADDING)
     y1 = max(0, int(ys.min()) - PADDING)
     x2 = min(w, int(xs.max()) + PADDING)
     y2 = min(h, int(ys.max()) + PADDING)
-    return (x1, y1, x2, y2)
+    return angle, (x1, y1, x2, y2)
+
+
+def get_search_crop(image_path):
+    img = cv2.imread(image_path)
+    img, _ = _deskew(img)
+    _, (x1, y1, x2, y2) = find_search_roi(image_path)
+    return img[y1:y2, x1:x2]
 ```
 
 Note the furniture bar and card-bearing bar are one physically connected L-shaped
 piece — the vertical bar alone spans nearly the full image height, so the
-furniture-column mask (`mount[:, :furniture_x] = False`) must be applied
+furniture-column mask (`mount[:, :safe_cut] = False`) must be applied
 *before* computing min/max, not as a post-hoc box-overlap filter, or the ROI's
 y-range balloons to the vertical bar's full height.
 
@@ -604,8 +657,8 @@ git commit -m "feat: pivot label detection to a single search ROI per image"
 - Modify: `environment.yml` (OCR library — pick after benchmarking)
 
 **Interfaces:**
-- Consumes: `find_search_roi` box from Task 5 — Task 7 crops the image to this ROI before calling into this module.
-- Produces: `run_ocr(crop: PIL.Image.Image) -> list[tuple[str, float]]` (one `(text, confidence)` per *detected text region* within the ROI — the OCR engine's own text detector replaces the per-card cropping Task 5 originally tried to do by hand, see Task 5's revision notes). Task 7 calls this once per image, on the single ROI crop, and gets back as many results as there are text snippets (date card, locality card, confound cards, all mixed together — `classify_field`, Task 3, sorts them out).
+- Consumes: `get_search_crop(image_path)` from Task 5 — already deskewed and cropped to the ROI, ready to feed straight into OCR.
+- Produces: `run_ocr(crop: numpy.ndarray) -> list[tuple[str, float]]` (one `(text, confidence)` per *detected text region* within the ROI — the OCR engine's own text detector replaces the per-card cropping Task 5 originally tried to do by hand, see Task 5's revision notes). Task 7 calls this once per image, on the single ROI crop, and gets back as many results as there are text snippets (date card, locality card, confound cards, all mixed together — `classify_field`, Task 3, sorts them out).
 
 - [ ] **Step 1: Benchmark 2-3 OCR engines on a handful of real ROI crops before committing to one**
 
@@ -736,10 +789,8 @@ Expected: 5 passed
 # src/pipeline.py
 import os
 
-from PIL import Image
-
 from src.classify_field import classify_field
-from src.detect_labels import find_search_roi
+from src.detect_labels import get_search_crop
 from src.merge_records import assemble_field
 from src.ocr_labels import run_ocr
 
@@ -748,9 +799,7 @@ IMAGES_DIR = os.path.join("data", "raw", "images")
 
 def process_image(image_file):
     image_path = os.path.join(IMAGES_DIR, image_file)
-    roi = find_search_roi(image_path)
-    img = Image.open(image_path)
-    crop = img.crop(roi)
+    crop = get_search_crop(image_path)
     date_cards, locality_cards = [], []
     for text, confidence in run_ocr(crop):
         field = classify_field(text)
