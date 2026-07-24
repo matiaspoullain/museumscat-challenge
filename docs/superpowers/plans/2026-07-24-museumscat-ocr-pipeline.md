@@ -6,7 +6,7 @@
 
 **Goal:** Build a two-stage pipeline (detect label cards on the specimen photo → OCR only the crops → classify/merge into `verbatimDate`/`verbatimLocality` with calibrated confidence) that produces a valid, scored Kaggle submission for the MuseumSCAT competition, plus a local NED/AURC evaluation harness to iterate without burning submission quota.
 
-**Architecture:** Classical CV for label localization (the studio photos have a fixed uniform background and light rectangular tag cards — no bounding-box ground truth exists, so a trained detector isn't an option yet; contour/color-based segmentation is). Cropped label images go through an OCR engine (candidate: `doctr`, benchmarked against `easyocr`/`pytesseract`) to get text + token confidence. A rule-based classifier splits recognized snippets into date / locality / confounding (collector, determination, museum-boilerplate) text. A merge step joins same-specimen multi-card values with `|`, matching the competition's permutation-invariant scoring. A calibration step (isotonic regression on the 200-example train set) turns raw OCR confidence into the calibrated confidence the AURC metric rewards.
+**Architecture:** Classical CV for label localization (the studio photos have a fixed-position furniture column to exclude and a speckled mounting surface that's nearly as bright as the tag cards pinned to it — no bounding-box ground truth exists, so a trained detector isn't an option yet; brightness+local-texture segmentation, detailed in Task 5, is). Cropped label images go through an OCR engine (candidate: `doctr`, benchmarked against `easyocr`/`pytesseract`) to get text + token confidence. A rule-based classifier splits recognized snippets into date / locality / confounding (collector, determination, museum-boilerplate) text. A merge step joins same-specimen multi-card values with `|`, matching the competition's permutation-invariant scoring. A calibration step (isotonic regression on the 200-example train set) turns raw OCR confidence into the calibrated confidence the AURC metric rewards.
 
 **Tech Stack:** Python 3.11, conda env `museumscat-challenge` (see `environment.yml`), pandas/numpy/pillow already installed. OCR/CV libraries (`opencv-python-headless`, `doctr` or `easyocr`) are added in Task 5/6 — ask before pinning the final choice, since these are non-trivial dependencies (torch-based).
 
@@ -28,6 +28,7 @@
 - [x] `src/download_kaggle_data.py` written (ported from `bayesian-kaggle/template`, slug filled in) and run — `data/raw/{train.csv,test.csv,images/*.jpeg}` (3500 images, 6.9GB) and `kaggle_meta/pages/*.md` are on disk.
 - [x] Competition understood: OCR of `verbatimDate` + `verbatimLocality` from Danish Dung Beetle specimen label photos; 200/3500 labeled; scored via AURC (NED + confidence calibration), lower is better; multi-card specimens use `|`-joined, permutation-scored values.
 - [x] Sample images inspected (`1709789.jpeg`, `1742772.jpeg`, `1709018.jpeg`): every photo has a **fixed-layout studio template** — top-left NHM Denmark logo card, DaSSCo logo card, color-checker + ruler + NHMD barcode card (bottom-left), and a foam mounting block (top/right area) carrying 1-4 small variable-position paper/plastic tag cards (white/cream/tan) plus the pinned specimen itself. The tag cards are the only OCR targets; everything else is boilerplate to exclude.
+- [x] Task 2 (EDA) done on a 12-image grid + pixel-level probing of 3 full-res images: confirmed the furniture column is fixed at `x ≈ [0, 2200]`, full height; found the speckled mount surface is nearly as bright as the tag cards (brightness-only thresholding won't separate them — texture/local-variance is needed instead, see `tables_figures/eda/layout_notes.md`). Task 5's detector below is already updated for this.
 
 ---
 
@@ -488,33 +489,51 @@ Ask the user before adding — this is a new dependency (`ask before adding new 
 
 Then: `conda env update -n museumscat-challenge -f environment.yml`
 
-- [ ] **Step 2: Implement contour-based candidate detection, restricted to the non-furniture region found in Task 2**
+- [ ] **Step 2: Implement texture+brightness candidate detection, restricted to the non-furniture region found in Task 2**
+
+Plain Otsu brightness thresholding is **not** enough — EDA (`tables_figures/eda/layout_notes.md`)
+found the speckled foam mounting surface is nearly as bright as the tag cards
+pinned on it; a brightness-only threshold recovers the whole mount, not the
+individual cards. What separates a card from the mount is *texture*: the
+mount has a fine black speckle (high local variance in a small window), tag
+cards are smooth solid color (low local variance). Combine bright + smooth.
 
 ```python
 # src/detect_labels.py
 import cv2
 import numpy as np
 
-# Furniture exclusion box, in original-image pixel coords, from Task 2's
-# layout_notes.md findings (left column containing logos/color-chart/barcode).
-FURNITURE_EXCLUSION_BOX = None  # fill in from tables_figures/eda/layout_notes.md
+# Furniture exclusion box, in original-image pixel coords — measured in Task 2
+# (tables_figures/eda/layout_notes.md): vertical bar holding the fixed logo/
+# color-chart/barcode cards, roughly x in [0, 2200], full image height.
+FURNITURE_EXCLUSION_BOX = (0, 0, 2200, 5464)
 
 MIN_CARD_AREA = 2000
 MAX_CARD_AREA = 500000
+BRIGHTNESS_THRESHOLD = 160
+LOCAL_STD_WINDOW = 15
+MAX_LOCAL_STD = 18  # smooth card surface vs. speckled mount, tune in Step 3
 
 
 def find_label_crops(image_path):
     img = cv2.imread(image_path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    mean = cv2.blur(gray, (LOCAL_STD_WINDOW, LOCAL_STD_WINDOW))
+    mean_sq = cv2.blur(gray * gray, (LOCAL_STD_WINDOW, LOCAL_STD_WINDOW))
+    local_std = np.sqrt(np.clip(mean_sq - mean * mean, 0, None))
+
+    card_mask = ((gray > BRIGHTNESS_THRESHOLD) & (local_std < MAX_LOCAL_STD)).astype(np.uint8) * 255
+    card_mask = cv2.morphologyEx(card_mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+
+    contours, _ = cv2.findContours(card_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     boxes = []
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
         area = w * h
         if not (MIN_CARD_AREA <= area <= MAX_CARD_AREA):
             continue
-        if FURNITURE_EXCLUSION_BOX and _overlaps(x, y, w, h, FURNITURE_EXCLUSION_BOX):
+        if _overlaps(x, y, w, h, FURNITURE_EXCLUSION_BOX):
             continue
         boxes.append((x, y, x + w, y + h))
     return boxes
