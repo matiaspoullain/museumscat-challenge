@@ -40,12 +40,39 @@ What actually distinguishes a tag card from the mount surface it sits on:
   confound cards) orange/red — all distinguishable from the mount's neutral
   grey-white speckle by saturation, not just brightness.
 
-**Revised detection strategy for Task 5**: within the search region (outside
-the fixed furniture column), flag pixels that are both bright (>~160) *and*
-low local variance (smooth, e.g. via a small-window std-dev or Laplacian
-filter) as card candidates, then find connected components / contours on that
-mask instead of on a plain brightness threshold. This replaces the plan's
-original Otsu-only sketch.
+**Revised detection strategy for Task 5, take 1 (abandoned)**: flag pixels
+that are bright *and* low local variance (smooth) as card candidates. This
+failed badly in practice (6/20 review images got zero detections) — text
+handwriting *inside* a card has higher local variance than the blank speckled
+mount surface around it, so this heuristic actively excludes the part of the
+card we care about most. A follow-up Canny-edge/rectangularity attempt failed
+for the same underlying reason in reverse: card-vs-mount contrast is very low
+(both near-white), but ink-vs-paper contrast is very high, so Canny finds
+individual text glyphs, not the card outline.
+
+**Revised detection strategy for Task 5, take 2 (adopted)**: stop trying to
+find individual cards. The whole L-shaped mount (furniture bar + card-bearing
+bar) *is* trivially separable from the background by a plain brightness
+threshold (high contrast, unlike card-vs-mount) — it's one physically
+connected blob. Take the largest connected bright component, mask out the
+furniture column (`x < 2200`) from it, and use the bounding box of what's left
+as a single search ROI covering every card on that image. The specimen's own
+small pinned card is a separate, disconnected blob and is naturally excluded
+(connected-components, not a single global bbox). Individual text
+localization *within* that ROI is deferred to the OCR engine's own text
+detector in Task 6, rather than solved by hand — that's a problem OCR
+libraries already solve robustly (doctr/easyocr ship CRAFT/DBNet-style
+detectors built for exactly this: text on a cluttered, low-contrast
+background). Confound cards (collector/determination/species, visually
+identical material to date/locality cards) are still filtered *after* OCR by
+`classify_field` (Task 3), not by localization — that was already the design
+and doesn't change.
+
+Validated on the same 20 train images: 20/20 have all visible label cards
+fully contained in the ROI. 2/20 are more generous than necessary (the ROI
+extends down to include the specimen's own pinned card, when a lighter/larger
+specimen card gets merged into the mount's connected component by the
+morphological opening step) — harmless over-inclusion, not a miss.
 
 ## Card count and size
 

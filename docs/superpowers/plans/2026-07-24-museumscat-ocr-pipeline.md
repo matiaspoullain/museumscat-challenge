@@ -6,7 +6,7 @@
 
 **Goal:** Build a two-stage pipeline (detect label cards on the specimen photo → OCR only the crops → classify/merge into `verbatimDate`/`verbatimLocality` with calibrated confidence) that produces a valid, scored Kaggle submission for the MuseumSCAT competition, plus a local NED/AURC evaluation harness to iterate without burning submission quota.
 
-**Architecture:** Classical CV for label localization (the studio photos have a fixed-position furniture column to exclude and a speckled mounting surface that's nearly as bright as the tag cards pinned to it — no bounding-box ground truth exists, so a trained detector isn't an option yet; brightness+local-texture segmentation, detailed in Task 5, is). Cropped label images go through an OCR engine (candidate: `doctr`, benchmarked against `easyocr`/`pytesseract`) to get text + token confidence. A rule-based classifier splits recognized snippets into date / locality / confounding (collector, determination, museum-boilerplate) text. A merge step joins same-specimen multi-card values with `|`, matching the competition's permutation-invariant scoring. A calibration step (isotonic regression on the 200-example train set) turns raw OCR confidence into the calibrated confidence the AURC metric rewards.
+**Architecture:** Classical CV narrows each photo down to one search ROI (the mount surface minus a fixed furniture column — high-contrast and easy to segment by brightness; see Task 5 for why per-card detection was abandoned). The OCR engine's own text detector (not hand-rolled CV — card-vs-mount contrast is too low, text-vs-paper contrast is too high, see Task 5) finds and reads individual text snippets within that ROI (candidate: `doctr`, benchmarked against `easyocr`/`pytesseract`), returning text + confidence per snippet. A rule-based classifier splits recognized snippets into date / locality / confounding (collector, determination, museum-boilerplate) text. A merge step joins same-specimen multi-card values with `|`, matching the competition's permutation-invariant scoring. A calibration step (isotonic regression on the 200-example train set) turns raw OCR confidence into the calibrated confidence the AURC metric rewards.
 
 **Tech Stack:** Python 3.11, conda env `museumscat-challenge` (see `environment.yml`), pandas/numpy/pillow already installed. OCR/CV libraries (`opencv-python-headless`, `doctr` or `easyocr`) are added in Task 5/6 — ask before pinning the final choice, since these are non-trivial dependencies (torch-based).
 
@@ -469,90 +469,89 @@ git commit -m "feat: add multi-card field assembly"
 
 ---
 
-## Task 5: Label card detection (classical CV)
+## Task 5: Label search ROI detection (classical CV)
+
+**Status: done, revised twice from the original sketch below — see
+`tables_figures/eda/layout_notes.md` for the full story.** Per-card detection
+(brightness+texture, then Canny+rectangularity) was abandoned: card-vs-mount
+contrast is too low and text-vs-paper contrast is too high, so both
+approaches either erased card interiors or fragmented cards into
+per-character noise. The adopted approach instead finds one **search ROI per
+image** (the whole mount surface minus the furniture column) via a plain
+brightness threshold + connected components — high-contrast and reliable,
+unlike card-vs-mount separation — and defers finding individual text regions
+*within* that ROI to the OCR engine's own text detector in Task 6, rather
+than solving that by hand.
 
 **Files:**
-- Create: `src/detect_labels.py`
-- Output for review: `tables_figures/eda/detection_review/*.jpg` (annotated previews, gitignored — derived from raw images)
+- Created: `src/detect_labels.py`
+- Review script: `src/review_detections.py` (not part of the pipeline, a
+  throwaway tool for the visual verification step, kept for future re-review)
+- Output for review: `tables_figures/eda/detection_review/*.jpeg` (annotated
+  previews, gitignored — derived from raw images)
 
 **Interfaces:**
-- Consumes: EDA notes from Task 2 (background/tag color signature, furniture region).
-- Produces: `find_label_crops(image_path: str) -> list[tuple[int, int, int, int]]` returning `(left, top, right, bottom)` boxes in original image pixel coordinates for candidate tag cards, with the fixed furniture region already excluded. Task 6 (OCR) crops each box and runs OCR on it.
-
-- [ ] **Step 1: Add `opencv-python-headless` to `environment.yml`**
-
-Ask the user before adding — this is a new dependency (`ask before adding new libraries/packages` is a standing preference). Once approved:
-
-```yaml
-      - opencv-python-headless
-```
-
-Then: `conda env update -n museumscat-challenge -f environment.yml`
-
-- [ ] **Step 2: Implement texture+brightness candidate detection, restricted to the non-furniture region found in Task 2**
-
-Plain Otsu brightness thresholding is **not** enough — EDA (`tables_figures/eda/layout_notes.md`)
-found the speckled foam mounting surface is nearly as bright as the tag cards
-pinned on it; a brightness-only threshold recovers the whole mount, not the
-individual cards. What separates a card from the mount is *texture*: the
-mount has a fine black speckle (high local variance in a small window), tag
-cards are smooth solid color (low local variance). Combine bright + smooth.
+- Consumes: EDA notes from Task 2 (furniture column x-boundary).
+- Produces: `find_search_roi(image_path: str) -> tuple[int, int, int, int]`
+  returning one `(x1, y1, x2, y2)` box in original-image pixel coordinates
+  bounding the mount surface where cards live, furniture column and specimen
+  area excluded. Task 6's OCR engine runs its own text detector over this one
+  crop per image (not per-card crops — that distinction no longer exists).
 
 ```python
 # src/detect_labels.py
 import cv2
 import numpy as np
 
-# Furniture exclusion box, in original-image pixel coords — measured in Task 2
-# (tables_figures/eda/layout_notes.md): vertical bar holding the fixed logo/
-# color-chart/barcode cards, roughly x in [0, 2200], full image height.
-FURNITURE_EXCLUSION_BOX = (0, 0, 2200, 5464)
-
-MIN_CARD_AREA = 2000
-MAX_CARD_AREA = 500000
-BRIGHTNESS_THRESHOLD = 160
-LOCAL_STD_WINDOW = 15
-MAX_LOCAL_STD = 18  # smooth card surface vs. speckled mount, tune in Step 3
+FURNITURE_X = 2200  # from tables_figures/eda/layout_notes.md
+BRIGHTNESS_THRESHOLD = 140
+OPEN_KERNEL = 21
+PADDING = 30
 
 
-def find_label_crops(image_path):
+def find_search_roi(image_path):
     img = cv2.imread(image_path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, mask = cv2.threshold(gray, BRIGHTNESS_THRESHOLD, 255, cv2.THRESH_BINARY)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((OPEN_KERNEL, OPEN_KERNEL), np.uint8))
 
-    mean = cv2.blur(gray, (LOCAL_STD_WINDOW, LOCAL_STD_WINDOW))
-    mean_sq = cv2.blur(gray * gray, (LOCAL_STD_WINDOW, LOCAL_STD_WINDOW))
-    local_std = np.sqrt(np.clip(mean_sq - mean * mean, 0, None))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 1:
+        return (FURNITURE_X, 0, w, h)
+    largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    mount = labels == largest
+    mount[:, :FURNITURE_X] = False
 
-    card_mask = ((gray > BRIGHTNESS_THRESHOLD) & (local_std < MAX_LOCAL_STD)).astype(np.uint8) * 255
-    card_mask = cv2.morphologyEx(card_mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    ys, xs = np.where(mount)
+    if len(xs) == 0:
+        return (FURNITURE_X, 0, w, h)
 
-    contours, _ = cv2.findContours(card_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    boxes = []
-    for c in contours:
-        x, y, w, h = cv2.boundingRect(c)
-        area = w * h
-        if not (MIN_CARD_AREA <= area <= MAX_CARD_AREA):
-            continue
-        if _overlaps(x, y, w, h, FURNITURE_EXCLUSION_BOX):
-            continue
-        boxes.append((x, y, x + w, y + h))
-    return boxes
-
-
-def _overlaps(x, y, w, h, box):
-    bx1, by1, bx2, by2 = box
-    return not (x + w < bx1 or x > bx2 or y + h < by1 or y > by2)
+    x1 = max(FURNITURE_X, int(xs.min()) - PADDING)
+    y1 = max(0, int(ys.min()) - PADDING)
+    x2 = min(w, int(xs.max()) + PADDING)
+    y2 = min(h, int(ys.max()) + PADDING)
+    return (x1, y1, x2, y2)
 ```
 
-- [ ] **Step 2: Manual verification against 20 train images**
+Note the furniture bar and card-bearing bar are one physically connected L-shaped
+piece — the vertical bar alone spans nearly the full image height, so the
+furniture-column mask (`mount[:, :FURNITURE_X] = False`) must be applied
+*before* computing min/max, not as a post-hoc box-overlap filter, or the ROI's
+y-range balloons to the vertical bar's full height.
 
-There is no ground-truth bounding box to assert against, so this step is inspection-driven rather than a unit test — write a small throwaway script that draws `find_label_crops` boxes on 20 images from `data/raw/train.csv` and saves them to `tables_figures/eda/detection_review/`, then Read each one. Iterate `MIN_CARD_AREA`/`MAX_CARD_AREA`/`FURNITURE_EXCLUSION_BOX` until boxes visually cover the tag cards (and only the tag cards) on at least 18/20 images. Record the final thresholds and known failure modes in `tables_figures/eda/layout_notes.md`.
+Validated on 20 train images (`src/review_detections.py` + `Read` on each
+output): 20/20 fully contain every visible label card; 2/20 are more generous
+than strictly necessary (ROI extends into the specimen's own pinned card when
+it's large/light enough to merge into the mount's connected component) —
+over-inclusion, not a miss, and harmless since `classify_field` (Task 3)
+filters non-date/locality text downstream regardless of where it came from.
 
-- [ ] **Step 3: Commit**
+- [x] **Commit**
 
 ```bash
-git add src/detect_labels.py tables_figures/eda/layout_notes.md environment.yml
-git commit -m "feat: add classical-CV label card detection"
+git add src/detect_labels.py src/review_detections.py tables_figures/eda/layout_notes.md .gitignore
+git commit -m "feat: pivot label detection to a single search ROI per image"
 ```
 
 ---
@@ -564,20 +563,20 @@ git commit -m "feat: add classical-CV label card detection"
 - Modify: `environment.yml` (OCR library — pick after benchmarking)
 
 **Interfaces:**
-- Consumes: `find_label_crops` boxes from Task 5.
-- Produces: `run_ocr(crop: PIL.Image.Image) -> tuple[str, float]` (text, confidence in `[0,1]`). Task 7 calls this once per detected crop.
+- Consumes: `find_search_roi` box from Task 5 — Task 7 crops the image to this ROI before calling into this module.
+- Produces: `run_ocr(crop: PIL.Image.Image) -> list[tuple[str, float]]` (one `(text, confidence)` per *detected text region* within the ROI — the OCR engine's own text detector replaces the per-card cropping Task 5 originally tried to do by hand, see Task 5's revision notes). Task 7 calls this once per image, on the single ROI crop, and gets back as many results as there are text snippets (date card, locality card, confound cards, all mixed together — `classify_field`, Task 3, sorts them out).
 
-- [ ] **Step 1: Benchmark 2-3 OCR engines on a handful of real crops before committing to one**
+- [ ] **Step 1: Benchmark 2-3 OCR engines on a handful of real ROI crops before committing to one**
 
-This is exploratory — ask the user which engines to try (candidates: `doctr` — good with printed+some handwriting and gives per-word confidence; `easyocr` — simpler API; `pytesseract` — classic but weak on handwriting). Add the winning library to `environment.yml` (ask before adding, per standing preference) and remove candidates that lost.
+This is exploratory — ask the user which engines to try (candidates: `doctr` — ships a CRAFT/DBNet-style detector plus recognizer, good with printed+some handwriting, gives per-word confidence; `easyocr` — simpler API, similar detector+recognizer bundling; `pytesseract` — classic, but its detection is weak on handwriting and cluttered backgrounds, likely a poor fit given Task 5's findings). Add the winning library to `environment.yml` (ask before adding, per standing preference) and remove candidates that lost.
 
-- [ ] **Step 2: Implement `run_ocr` wrapping the chosen engine**
+- [ ] **Step 2: Implement `run_ocr` wrapping the chosen engine's detector+recognizer**
 
-Exact implementation depends on Step 1's winner — write it as a thin adapter so `ocr_labels.py`'s only public surface is `run_ocr(crop) -> (text, confidence)`, keeping the door open to swap in a VLM-based implementation later (per the Global Constraints note on the Anthropic API being a possible Phase-2 fallback) without changing any caller.
+Exact implementation depends on Step 1's winner — write it as a thin adapter so `ocr_labels.py`'s only public surface is `run_ocr(crop) -> list[(text, confidence)]`, keeping the door open to swap in a VLM-based implementation later (per the Global Constraints note on the Anthropic API being a possible Phase-2 fallback) without changing any caller.
 
 - [ ] **Step 3: Score the full pipeline so far on the 200-row dev set**
 
-Wire `find_label_crops` → `run_ocr` → `classify_field` → `assemble_field` → `best_pipe_ned`/`aurc` from Tasks 1-5 into a small driver script (`src/pipeline.py`, Task 7) and report mean NED and AURC per field on `data/raw/train.csv`. This is the first real accuracy signal — use it to decide whether classical OCR is sufficient or whether the Phase-2 VLM fallback is worth pursuing for low-confidence crops.
+Wire `find_search_roi` → `run_ocr` → `classify_field` → `assemble_field` → `best_pipe_ned`/`aurc` from Tasks 1-5 into a small driver script (`src/pipeline.py`, Task 7) and report mean NED and AURC per field on `data/raw/train.csv`. This is the first real accuracy signal — use it to decide whether classical OCR is sufficient or whether the Phase-2 VLM fallback is worth pursuing for low-confidence crops.
 
 - [ ] **Step 4: Commit**
 
@@ -699,7 +698,7 @@ import os
 from PIL import Image
 
 from src.classify_field import classify_field
-from src.detect_labels import find_label_crops
+from src.detect_labels import find_search_roi
 from src.merge_records import assemble_field
 from src.ocr_labels import run_ocr
 
@@ -708,12 +707,11 @@ IMAGES_DIR = os.path.join("data", "raw", "images")
 
 def process_image(image_file):
     image_path = os.path.join(IMAGES_DIR, image_file)
-    boxes = find_label_crops(image_path)
+    roi = find_search_roi(image_path)
     img = Image.open(image_path)
+    crop = img.crop(roi)
     date_cards, locality_cards = [], []
-    for box in boxes:
-        crop = img.crop(box)
-        text, confidence = run_ocr(crop)
+    for text, confidence in run_ocr(crop):
         field = classify_field(text)
         if field == "date":
             date_cards.append((text, confidence))

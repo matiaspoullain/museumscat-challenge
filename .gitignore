@@ -7,3 +7,4 @@ __pycache__/
 data/raw/
 data/processed/
 models/
+tables_figures/eda/detection_review/
