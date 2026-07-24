@@ -1,0 +1,5 @@
+Welcome to the MuseumSCAT Challenge! Your task is to develop machine learning models that can accurately transcribe handwritten and machine written collection date and locality information from historical natural history specimen labels.
+
+Natural history collections contain millions of preserved specimens collected over centuries. These specimens are invaluable for biodiversity research, climate change studies, and understanding species distributions. However, much of the critical information about when and where specimens were collected remains locked in handwritten labels that are difficult to search and analyze at scale.
+
+![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F5490045%2Fa05b695dc0100b741ab8ae6b70a77e19%2Foverview_image.jpg?generation=1778490850970126&alt=media)
