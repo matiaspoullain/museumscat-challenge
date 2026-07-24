@@ -471,17 +471,31 @@ git commit -m "feat: add multi-card field assembly"
 
 ## Task 5: Label search ROI detection (classical CV)
 
-**Status: done, revised twice from the original sketch below — see
-`tables_figures/eda/layout_notes.md` for the full story.** Per-card detection
-(brightness+texture, then Canny+rectangularity) was abandoned: card-vs-mount
-contrast is too low and text-vs-paper contrast is too high, so both
-approaches either erased card interiors or fragmented cards into
-per-character noise. The adopted approach instead finds one **search ROI per
-image** (the whole mount surface minus the furniture column) via a plain
-brightness threshold + connected components — high-contrast and reliable,
-unlike card-vs-mount separation — and defers finding individual text regions
-*within* that ROI to the OCR engine's own text detector in Task 6, rather
-than solving that by hand.
+**Status: done, revised three times from the original sketch below — see
+`tables_figures/eda/layout_notes.md` and `tables_figures/eda/dassco_anchor_test/notes.md`
+for the full story.** Per-card detection (brightness+texture, then
+Canny+rectangularity) was abandoned: card-vs-mount contrast is too low and
+text-vs-paper contrast is too high, so both approaches either erased card
+interiors or fragmented cards into per-character noise. The adopted approach
+instead finds one **search ROI per image** (the whole mount surface minus the
+furniture column) via a plain brightness threshold + connected components —
+high-contrast and reliable, unlike card-vs-mount separation — and defers
+finding individual text regions *within* that ROI to the OCR engine's own
+text detector in Task 6, rather than solving that by hand.
+
+The furniture-column cut itself went through one more revision: a hardcoded
+`FURNITURE_X` pixel constant is fragile (the furniture bar and card bar are
+one connected blob joined at an L-corner; missing the true corner by even
+30-100px reconnects to the furniture bar's near-full-image-height extent and
+the ROI balloons). Fixed by detecting the DaSSCo card by color (`cv2.inRange`
+on HSV — solid saturated blue, cleanly separable from the background and
+mount) to get its true per-image bounding box, then deriving
+`furniture_x = dassco_x + 1.21 * dassco_width` from it — validated on 20
+images, all landing at a consistent 38.5%-40.0% ROI-bottom height. An earlier
+attempt at this same fix, anchoring on the logo card via `cv2.matchTemplate`,
+was tried and discarded: fixed-size template matching measures position, not
+true size, so it can't distinguish a shifted mount from a scaled one, and
+"fixing" 2 broken images that way broke 5 different, previously-fine ones.
 
 **Files:**
 - Created: `src/detect_labels.py`
@@ -503,31 +517,59 @@ than solving that by hand.
 import cv2
 import numpy as np
 
-FURNITURE_X = 2200  # from tables_figures/eda/layout_notes.md
+DASSCO_HSV_LOW = (95, 95, 40)
+DASSCO_HSV_HIGH = (130, 255, 255)
+DASSCO_OPEN_KERNEL = 15
+FURNITURE_X_RATIO = 1.21  # furniture_x = dassco_x + ratio * dassco_width
+
 BRIGHTNESS_THRESHOLD = 140
 OPEN_KERNEL = 21
 PADDING = 30
+
+
+def _dassco_bbox(img):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, DASSCO_HSV_LOW, DASSCO_HSV_HIGH)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((DASSCO_OPEN_KERNEL, DASSCO_OPEN_KERNEL), np.uint8))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 1:
+        return None
+    largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    x, y, w, h, _ = stats[largest]
+    return (x, y, w, h)
 
 
 def find_search_roi(image_path):
     img = cv2.imread(image_path)
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    dassco = _dassco_bbox(img)
+    # Two different cuts from the same anchor: `safe_cut` is deliberately
+    # generous so the connected-component search never re-touches the
+    # furniture bar (undershooting the true corner by even 30-100px
+    # reconnects to it - see notes.md). `report_x1` is the DaSSCo card's own
+    # right edge, snug against it, so cards pinned close to the corner don't
+    # get clipped - the gap between the two is blank mount surface, already
+    # known to be safe to include (Task 6's OCR won't find text there).
+    safe_cut = int(dassco[0] + FURNITURE_X_RATIO * dassco[2]) if dassco else w // 3
+    report_x1 = (dassco[0] + dassco[2]) if dassco else safe_cut
+
     _, mask = cv2.threshold(gray, BRIGHTNESS_THRESHOLD, 255, cv2.THRESH_BINARY)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((OPEN_KERNEL, OPEN_KERNEL), np.uint8))
 
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     if n <= 1:
-        return (FURNITURE_X, 0, w, h)
+        return (report_x1, 0, w, h)
     largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
     mount = labels == largest
-    mount[:, :FURNITURE_X] = False
+    mount[:, :safe_cut] = False
 
     ys, xs = np.where(mount)
     if len(xs) == 0:
-        return (FURNITURE_X, 0, w, h)
+        return (report_x1, 0, w, h)
 
-    x1 = max(FURNITURE_X, int(xs.min()) - PADDING)
+    x1 = max(0, report_x1 - PADDING)
     y1 = max(0, int(ys.min()) - PADDING)
     x2 = min(w, int(xs.max()) + PADDING)
     y2 = min(h, int(ys.max()) + PADDING)
@@ -536,16 +578,15 @@ def find_search_roi(image_path):
 
 Note the furniture bar and card-bearing bar are one physically connected L-shaped
 piece — the vertical bar alone spans nearly the full image height, so the
-furniture-column mask (`mount[:, :FURNITURE_X] = False`) must be applied
+furniture-column mask (`mount[:, :furniture_x] = False`) must be applied
 *before* computing min/max, not as a post-hoc box-overlap filter, or the ROI's
 y-range balloons to the vertical bar's full height.
 
 Validated on 20 train images (`src/review_detections.py` + `Read` on each
-output): 20/20 fully contain every visible label card; 2/20 are more generous
-than strictly necessary (ROI extends into the specimen's own pinned card when
-it's large/light enough to merge into the mount's connected component) —
-over-inclusion, not a miss, and harmless since `classify_field` (Task 3)
-filters non-date/locality text downstream regardless of where it came from.
+output): all 20 land at a consistent 38.5%-40.0% ROI-bottom height, fully
+containing every visible label card, none over-extending into the specimen
+area (the earlier over-inclusion cases were downstream of the fragile
+hardcoded cut, not of anything else).
 
 - [x] **Commit**
 

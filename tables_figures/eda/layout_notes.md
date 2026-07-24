@@ -69,10 +69,34 @@ identical material to date/locality cards) are still filtered *after* OCR by
 and doesn't change.
 
 Validated on the same 20 train images: 20/20 have all visible label cards
-fully contained in the ROI. 2/20 are more generous than necessary (the ROI
-extends down to include the specimen's own pinned card, when a lighter/larger
-specimen card gets merged into the mount's connected component by the
-morphological opening step) — harmless over-inclusion, not a miss.
+fully contained in the ROI. 2/20 were originally more generous than necessary
+(ROI extended down to include the specimen's own pinned card) — this turned
+out to be a symptom of a deeper issue, fixed below.
+
+**Follow-up fix: the furniture-column cut was fragile.** `FURNITURE_X = 2200`
+was a hardcoded constant. Since the vertical furniture bar and the
+card-bearing horizontal bar are one connected blob (physically joined at an
+L-corner), a cut that falls even ~30-100px short of the true corner
+reconnects to the vertical bar — which runs nearly the full image height,
+down to the barcode near the bottom — and the ROI balloons to cover almost
+the whole image. That's what caused the 2 over-generous cases above, and a
+naive "fix" (deriving the cut from the logo card's template-match position)
+broke 5 *other*, previously-fine images the same way, because fixed-size
+template matching measures position, not true size, and can't tell a shifted
+mount from a scaled one.
+
+Resolved in `tables_figures/eda/dassco_anchor_test/` (see that experiment's
+`notes.md` for the full comparison): detect the DaSSCo card by color instead
+(`cv2.inRange` on HSV, hue 95-130 & saturation > 95 — solid saturated blue,
+cleanly separable from the background's lower saturation ~59 and the mount's
+~18) to get its *true* per-image bounding box, then derive
+`furniture_x = dassco_x + 1.21 * dassco_width`. Validated on all 20 images:
+resulting ROI bottom edge lands at 38.5%-40.0% of image height on every one,
+including the 2 previously-broken cases — which turned out not to be a scale
+difference at all (DaSSCo card occupies the same ~18.5% of image width in
+all 20) but a ~350-450px in-frame position shift, something only the
+true-size color measurement could reveal. `detect_labels.py` now uses this
+approach.
 
 ## Card count and size
 
