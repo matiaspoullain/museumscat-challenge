@@ -110,36 +110,47 @@ def _make_doctr_multilingual_words(det_arch):
 
 
 FINETUNED_DANISH_CHECKPOINT = os.path.join("models", "reco_finetune", "danish_crnn_vgg16_bn.pt")
+FINETUNED_DANISH_STAGE1_CHECKPOINT = os.path.join("models", "reco_finetune", "danish_crnn_vgg16_bn_stage1.pt")
+FINETUNED_DANISH_STAGE2_CHECKPOINT = os.path.join("models", "reco_finetune", "danish_crnn_vgg16_bn_stage2.pt")
 
 
-def _doctr_finetuned_danish_words(crop_bgr):
-    """Run doctr on a single crop using the Danish-vocab fine-tuned
-    crnn_vgg16_bn recognizer (see
-    docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md), return
-    list of (text, confidence, (x1,y1,x2,y2)) in crop pixel coordinates."""
-    import torch
-    from doctr.datasets import VOCABS
-    from doctr.models import ocr_predictor, recognition
+def _make_doctr_finetuned_danish_words(checkpoint_path):
+    """Build a doctr-danish-vocab engine loading the given fine-tuned
+    crnn_vgg16_bn checkpoint (see
+    docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md). Returns
+    a run(crop_bgr) -> list[(text, confidence, (x1,y1,x2,y2))] closure."""
 
-    if not hasattr(_doctr_finetuned_danish_words, "_predictor"):
-        reco_model = recognition.__dict__["crnn_vgg16_bn"](pretrained=False, vocab=VOCABS["danish"])
-        reco_model.load_state_dict(torch.load(FINETUNED_DANISH_CHECKPOINT, map_location="cpu", weights_only=True))
-        _doctr_finetuned_danish_words._predictor = ocr_predictor(
-            det_arch="db_resnet50", reco_arch=reco_model, pretrained=True, assume_straight_pages=True
-        )
+    def run(crop_bgr):
+        import torch
+        from doctr.datasets import VOCABS
+        from doctr.models import ocr_predictor, recognition
 
-    h, w = crop_bgr.shape[:2]
-    crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-    result = _doctr_finetuned_danish_words._predictor([crop_rgb])
+        if not hasattr(run, "_predictor"):
+            reco_model = recognition.__dict__["crnn_vgg16_bn"](pretrained=False, vocab=VOCABS["danish"])
+            reco_model.load_state_dict(torch.load(checkpoint_path, map_location="cpu", weights_only=True))
+            run._predictor = ocr_predictor(
+                det_arch="db_resnet50", reco_arch=reco_model, pretrained=True, assume_straight_pages=True
+            )
 
-    words = []
-    for page in result.pages:
-        for block in page.blocks:
-            for line in block.lines:
-                for word in line.words:
-                    (rx1, ry1), (rx2, ry2) = word.geometry
-                    words.append((word.value, word.confidence, (int(rx1 * w), int(ry1 * h), int(rx2 * w), int(ry2 * h))))
-    return words
+        h, w = crop_bgr.shape[:2]
+        crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+        result = run._predictor([crop_rgb])
+
+        words = []
+        for page in result.pages:
+            for block in page.blocks:
+                for line in block.lines:
+                    for word in line.words:
+                        (rx1, ry1), (rx2, ry2) = word.geometry
+                        words.append((word.value, word.confidence, (int(rx1 * w), int(ry1 * h), int(rx2 * w), int(ry2 * h))))
+        return words
+
+    return run
+
+
+_doctr_finetuned_danish_words = _make_doctr_finetuned_danish_words(FINETUNED_DANISH_CHECKPOINT)
+_doctr_finetuned_danish_stage1_words = _make_doctr_finetuned_danish_words(FINETUNED_DANISH_STAGE1_CHECKPOINT)
+_doctr_finetuned_danish_stage2_words = _make_doctr_finetuned_danish_words(FINETUNED_DANISH_STAGE2_CHECKPOINT)
 
 
 _doctr_multilingual_words = _make_doctr_multilingual_words("db_resnet50")
@@ -170,6 +181,8 @@ ENGINES = {
     "doctr-multilingual": _doctr_multilingual_words,
     "doctr-multilingual-fastdet": _doctr_multilingual_fastdet_words,
     "doctr-finetuned-danish": _doctr_finetuned_danish_words,
+    "doctr-finetuned-danish-stage1": _doctr_finetuned_danish_stage1_words,
+    "doctr-finetuned-danish-stage2": _doctr_finetuned_danish_stage2_words,
     "easyocr": _easyocr_words,
     "pytesseract": _pytesseract_words,
 }
