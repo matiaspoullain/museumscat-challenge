@@ -13,7 +13,7 @@ Accelerator = GPU T4 x2 (or P100) and Internet = On.
 
 # %% Cell 2: locate the attached dataset's train/val folders
 # import os
-# INPUT_DIR = "/kaggle/input/museumscat-danish-recognizer-crops"
+# INPUT_DIR = "/kaggle/input/datasets/matiaspoullain/museumscat-danish-recognizer-crops"
 # TRAIN_PATH = os.path.join(INPUT_DIR, "train")
 # VAL_PATH = os.path.join(INPUT_DIR, "val")
 # assert os.path.isfile(os.path.join(TRAIN_PATH, "labels.json"))
