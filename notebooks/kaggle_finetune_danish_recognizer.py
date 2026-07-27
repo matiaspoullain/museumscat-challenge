@@ -4,6 +4,16 @@ Before running: create the notebook, attach the
 src/package_reco_dataset.py) as input, and under Settings enable
 Accelerator = GPU T4 x2 (or P100) and Internet = On.
 
+One-time setup for auto-save (Cell 7): the last cell pushes both checkpoints
+to the permanent private Kaggle Dataset "museumscat-danish-recognizer-checkpoints"
+automatically at the end of the run -- no manual download/save needed, safe
+even if you don't come back to the session. This needs Kaggle API credentials
+attached as notebook Secrets once:
+  1. https://www.kaggle.com/settings -> API -> Create New Token (downloads a
+     kaggle.json with your username + key).
+  2. This notebook's top toolbar -> Add-ons -> Secrets -> add KAGGLE_USERNAME
+     and KAGGLE_KEY (values from that file) -> make sure both show as Attached.
+
 Two-stage recipe, v3 (see docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md
 "Fine-tune result" section for the full history):
   - v1 (20 epochs, frozen backbone): reinitialized vocab-danish head never
@@ -25,7 +35,9 @@ as the lever rather than model capacity, since a bigger architecture on only
 
 Worst case (no early stop) this runs longer than v2's ~hour budget --
 if it's still going after an hour and you want to cap GPU usage, stop the
-session manually rather than waiting for the ceiling.
+session manually rather than waiting for the ceiling (Cell 7 only runs
+after Cell 5/6 finish, so an interrupted Stage 2 won't auto-save partial
+results -- that's expected).
 """
 
 # %% Cell 1: install doctr and fetch the pinned vendored training script
@@ -63,8 +75,33 @@ session manually rather than waiting for the ceiling.
 #     --early-stop --early-stop-epochs 100 --early-stop-delta 0.0005 \
 #     --output_dir /kaggle/working --name danish_crnn_vgg16_bn_stage2
 
-# %% Cell 6: confirm the final checkpoint was written -- download this file
-# (Kaggle Notebook output pane -> /kaggle/working/danish_crnn_vgg16_bn_stage2.pt)
+# %% Cell 6: confirm the final checkpoint was written
 # import os
 # assert os.path.isfile("/kaggle/working/danish_crnn_vgg16_bn_stage2.pt")
-# print("final checkpoint ready to download: /kaggle/working/danish_crnn_vgg16_bn_stage2.pt")
+# print("final checkpoint ready: /kaggle/working/danish_crnn_vgg16_bn_stage2.pt")
+
+# %% Cell 7: auto-save both checkpoints permanently to a Kaggle Dataset (no manual step needed)
+# import datetime
+# import json
+# import os
+# import shutil
+#
+# from kaggle_secrets import UserSecretsClient
+#
+# secrets = UserSecretsClient()
+# os.environ["KAGGLE_USERNAME"] = secrets.get_secret("KAGGLE_USERNAME")
+# os.environ["KAGGLE_KEY"] = secrets.get_secret("KAGGLE_KEY")
+#
+# OUT_DIR = "/kaggle/working/checkpoints_dataset"
+# os.makedirs(OUT_DIR, exist_ok=True)
+# shutil.copy("/kaggle/working/danish_crnn_vgg16_bn_stage1.pt", OUT_DIR)
+# shutil.copy("/kaggle/working/danish_crnn_vgg16_bn_stage2.pt", OUT_DIR)
+# with open(os.path.join(OUT_DIR, "dataset-metadata.json"), "w") as f:
+#     json.dump({
+#         "title": "MuseumSCAT Danish recognizer checkpoints",
+#         "id": "matiaspoullain/museumscat-danish-recognizer-checkpoints",
+#         "licenses": [{"name": "other"}],
+#     }, f)
+#
+# version_message = f"auto-save from notebook run at {datetime.datetime.utcnow().isoformat()}"
+# !kaggle datasets version -p {OUT_DIR} -m "{version_message}" --dir-mode zip
