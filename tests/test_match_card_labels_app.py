@@ -1,4 +1,4 @@
-from src.match_card_labels_app import build_candidates, build_queue
+from src.match_card_labels_app import build_candidates, build_queue, next_unmatched, unused_candidates
 
 
 def test_single_value_each_field():
@@ -80,3 +80,36 @@ def test_preserves_train_csv_specimen_order():
     ]
     queue = build_queue(manifest_rows, train_rows)
     assert [q["source_image_file"] for q in queue] == ["x.jpeg", "y.jpeg"]
+
+
+def test_next_unmatched_returns_first_not_in_matches():
+    queue = [{"crop_filename": "a.jpeg"}, {"crop_filename": "b.jpeg"}]
+    assert next_unmatched(queue, matches={"a.jpeg": {}}) == {"crop_filename": "b.jpeg"}
+
+
+def test_next_unmatched_returns_none_when_all_done():
+    queue = [{"crop_filename": "a.jpeg"}]
+    assert next_unmatched(queue, matches={"a.jpeg": {}}) is None
+
+
+def test_unused_candidates_finds_candidates_in_no_cards_selections():
+    candidates = [
+        {"field": "locality", "index": 0, "text": "Ti"},
+        {"field": "locality", "index": 1, "text": "Rørvig"},
+    ]
+    selections_by_card = [[{"field": "locality", "index": 0, "text": "Ti"}]]
+    assert unused_candidates(candidates, selections_by_card) == [
+        {"field": "locality", "index": 1, "text": "Rørvig"}
+    ]
+
+
+def test_unused_candidates_empty_when_all_used_across_cards():
+    candidates = [
+        {"field": "locality", "index": 0, "text": "Ti"},
+        {"field": "locality", "index": 1, "text": "Rørvig"},
+    ]
+    selections_by_card = [
+        [{"field": "locality", "index": 0, "text": "Ti"}],
+        [{"field": "locality", "index": 1, "text": "Rørvig"}],
+    ]
+    assert unused_candidates(candidates, selections_by_card) == []

@@ -65,3 +65,21 @@ def build_queue(manifest_rows, train_rows):
                 "candidates": candidates,
             })
     return queue
+
+
+def next_unmatched(queue, matches):
+    """First queue entry whose crop_filename isn't a key in matches, or None
+    if every entry has already been matched."""
+    for entry in queue:
+        if entry["crop_filename"] not in matches:
+            return entry
+    return None
+
+
+def unused_candidates(candidates, selections_by_card):
+    """candidates: one specimen's full candidate list. selections_by_card: a
+    list of that specimen's cards' already-saved selections (each itself a
+    list of {field, index, text} dicts). Returns the candidates that don't
+    appear in any card's selections, identified by (field, index)."""
+    used = {(sel["field"], sel["index"]) for selections in selections_by_card for sel in selections}
+    return [c for c in candidates if (c["field"], c["index"]) not in used]
