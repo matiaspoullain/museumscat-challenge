@@ -127,26 +127,26 @@ One card shown at a time:
 }
 ```
 
-Written atomically (write to `.tmp`, `os.replace`) after every save, same
-pattern as `src/label_crops_app.py`. `status` is one of `matched` /
-`no_relevant_text` / `skipped`.
+Written atomically (write to `.tmp`, `os.replace`) after every save -- same
+technique the rest of this repo's file-writing code already uses (e.g.
+`src/extract_card_crops.py`'s manifest/log appends). `status` is one of
+`matched` / `no_relevant_text` / `skipped`.
 
 ## Resumability
 
 On startup, load `card_text_matches.json` (if present) and skip any
 `crop_filename` already present as a key -- identical resumability pattern to
-every other long-running/manual script in this repo (`src/extract_card_crops.py`'s
-`processed.log`, `src/label_crops_app.py`'s `labels.json`).
+`src/extract_card_crops.py`'s `processed.log`.
 
 ## Error handling
 
 - Missing crop image file referenced by the manifest: the `/crop/<filename>`
-  route 404s the same way `label_crops_app.py`'s does; shouldn't happen since
-  the manifest was verified against disk after the Kaggle extraction, but
-  fails loud rather than silently if it ever does.
-- Directory-traversal on the crop filename: same containment check already
-  used in `label_crops_app.py` (`os.path.dirname(os.path.abspath(...))` must
-  equal the crops directory).
+  route 404s; shouldn't happen since the manifest was verified against disk
+  after the Kaggle extraction, but fails loud rather than silently if it
+  ever does.
+- Directory-traversal on the crop filename: containment check
+  (`os.path.dirname(os.path.abspath(...))` must equal the crops directory)
+  before serving any file.
 - A `train.csv` row whose `image_file` has zero rows in `manifest.csv` (no
   cards detected at all for that specimen): logged once at startup as a
   warning list, not fatal -- it just means that specimen contributes zero
@@ -156,14 +156,21 @@ every other long-running/manual script in this repo (`src/extract_card_crops.py`
 ## Testing
 
 - `tests/test_match_card_labels_app.py`: unit tests for the pure
-  `build_candidates(row)` function (empty-fields case, single-value case,
-  multi-pipe case, whitespace-stripping case) -- mirrors the existing
-  `tests/test_label_crops_app.py` pattern.
+  `build_candidates(row)`, `build_queue(...)`, `unused_candidates(...)`, and
+  `next_unmatched(...)` functions (empty-fields case, single-value case,
+  multi-pipe case, whitespace-stripping case, MISSING-only exclusion,
+  resumability skip).
 - The app itself (HTTP server, browser interaction): manual verification by
   running it and matching a handful of real specimens, per this repo's
   established convention of pytest for pure logic + manual runs for
-  UI/network-touching code (see `src/label_crops_app.py`,
-  `src/extract_card_crops.py`).
+  UI/network-touching code (see `src/extract_card_crops.py`).
+
+Note: this is the first standalone local web-app tool actually implemented in
+this repo -- the single-file stdlib `http.server` pattern here is original,
+not reused from an existing file (an earlier plan,
+`docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md` Task 2,
+sketches a similar-shaped labeling app at `src/label_crops_app.py`, but that
+plan was never executed, so no such file exists yet to import from).
 
 ## Self-review
 
