@@ -36,3 +36,32 @@ def build_candidates(row):
                 continue
             candidates.append({"field": field, "index": index, "text": text})
     return candidates
+
+
+def build_queue(manifest_rows, train_rows):
+    """manifest_rows: dicts with crop_filename/source_image_file/card_index
+    (as read from manifest.csv -- card_index is a string). train_rows: dicts
+    with image_file/verbatimDate/verbatimLocality (as read from train.csv).
+    Returns an ordered list of {crop_filename, source_image_file, card_index,
+    candidates} -- one entry per card crop, grouped by specimen in train.csv's
+    own row order (then by card_index ascending within a specimen), skipping
+    any specimen whose candidate list is empty (both fields "MISSING")."""
+    by_source = {}
+    for row in manifest_rows:
+        by_source.setdefault(row["source_image_file"], []).append(row)
+
+    queue = []
+    for train_row in train_rows:
+        image_file = train_row["image_file"]
+        candidates = build_candidates(train_row)
+        if not candidates:
+            continue
+        cards = sorted(by_source.get(image_file, []), key=lambda r: int(r["card_index"]))
+        for card in cards:
+            queue.append({
+                "crop_filename": card["crop_filename"],
+                "source_image_file": image_file,
+                "card_index": int(card["card_index"]),
+                "candidates": candidates,
+            })
+    return queue

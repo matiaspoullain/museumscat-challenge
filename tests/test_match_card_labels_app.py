@@ -1,4 +1,4 @@
-from src.match_card_labels_app import build_candidates
+from src.match_card_labels_app import build_candidates, build_queue
 
 
 def test_single_value_each_field():
@@ -42,3 +42,41 @@ def test_missing_piece_within_a_multi_pipe_field_is_skipped():
         {"field": "locality", "index": 0, "text": "Ti"},
         {"field": "locality", "index": 2, "text": "Rørvig"},
     ]
+
+
+def test_groups_cards_by_specimen_in_card_index_order():
+    manifest_rows = [
+        {"crop_filename": "a_card01.jpeg", "source_image_file": "a.jpeg", "card_index": "1"},
+        {"crop_filename": "a_card00.jpeg", "source_image_file": "a.jpeg", "card_index": "0"},
+    ]
+    train_rows = [{"image_file": "a.jpeg", "verbatimDate": "1901", "verbatimLocality": "Odense"}]
+    queue = build_queue(manifest_rows, train_rows)
+    assert [q["crop_filename"] for q in queue] == ["a_card00.jpeg", "a_card01.jpeg"]
+    assert queue[0]["candidates"] == [
+        {"field": "date", "index": 0, "text": "1901"},
+        {"field": "locality", "index": 0, "text": "Odense"},
+    ]
+
+
+def test_excludes_specimens_with_no_candidates():
+    manifest_rows = [{"crop_filename": "b_card00.jpeg", "source_image_file": "b.jpeg", "card_index": "0"}]
+    train_rows = [{"image_file": "b.jpeg", "verbatimDate": "MISSING", "verbatimLocality": "MISSING"}]
+    assert build_queue(manifest_rows, train_rows) == []
+
+
+def test_specimen_with_candidates_but_no_manifest_rows_contributes_nothing():
+    train_rows = [{"image_file": "c.jpeg", "verbatimDate": "1901", "verbatimLocality": "Odense"}]
+    assert build_queue([], train_rows) == []
+
+
+def test_preserves_train_csv_specimen_order():
+    manifest_rows = [
+        {"crop_filename": "y_card00.jpeg", "source_image_file": "y.jpeg", "card_index": "0"},
+        {"crop_filename": "x_card00.jpeg", "source_image_file": "x.jpeg", "card_index": "0"},
+    ]
+    train_rows = [
+        {"image_file": "x.jpeg", "verbatimDate": "1901", "verbatimLocality": "Odense"},
+        {"image_file": "y.jpeg", "verbatimDate": "1902", "verbatimLocality": "Aarhus"},
+    ]
+    queue = build_queue(manifest_rows, train_rows)
+    assert [q["source_image_file"] for q in queue] == ["x.jpeg", "y.jpeg"]
