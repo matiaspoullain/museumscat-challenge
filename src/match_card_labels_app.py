@@ -146,11 +146,15 @@ function render() {
     document.getElementById('selected-list').style.display = 'none';
     document.querySelectorAll('button.action').forEach(b => b.style.display = 'none');
     document.getElementById('done').style.display = 'block';
-    document.getElementById('progress').textContent = state.overall_progress;
+    document.getElementById('progress').textContent = state.overall_progress +
+      ` (matched: ${state.counts.matched}, skipped: ${state.counts.skipped}, ` +
+      `no_relevant_text: ${state.counts.no_relevant_text})`;
     return;
   }
   document.getElementById('progress').textContent =
-    `tarjeta ${state.specimen_position} del espécimen -- total ${state.overall_progress}`;
+    `tarjeta ${state.specimen_position} del espécimen -- total ${state.overall_progress} ` +
+    `(matched: ${state.counts.matched}, skipped: ${state.counts.skipped}, ` +
+    `no_relevant_text: ${state.counts.no_relevant_text})`;
   document.getElementById('crop').src = '/crop/' + state.crop_filename;
   selected = [];
   renderCandidates();
@@ -198,15 +202,32 @@ async function save(status) {
     alert('Elegí al menos un candidato, o usá "Sin texto relevante".');
     return;
   }
-  const res = await fetch('/api/save', {
-    method: 'POST',
-    body: JSON.stringify({ crop_filename: state.crop_filename, status: status, selections: selected }),
-  });
-  const result = await res.json();
-  if (result.error) { alert(result.error); return; }
+  let res;
+  try {
+    res = await fetch('/api/save', {
+      method: 'POST',
+      body: JSON.stringify({ crop_filename: state.crop_filename, status: status, selections: selected }),
+    });
+  } catch (e) {
+    alert('No se pudo conectar con el servidor.');
+    return;
+  }
+
+  let result;
+  try {
+    result = await res.json();
+  } catch (e) {
+    result = null;
+  }
+
+  if (!res.ok) {
+    alert(result && result.error ? result.error : 'Error del servidor, revisá la consola.');
+    return;
+  }
+  if (result && result.error) { alert(result.error); return; }
 
   const banner = document.getElementById('banner');
-  if (result.unused_candidates && result.unused_candidates.length > 0) {
+  if (result && result.unused_candidates && result.unused_candidates.length > 0) {
     const texts = result.unused_candidates.map((c) => '"' + c.text + '"').join(', ');
     banner.textContent = 'Atención: ' + texts + ' no fue usado en ninguna tarjeta de este espécimen.';
     banner.style.display = 'block';
@@ -255,7 +276,11 @@ class Handler(BaseHTTPRequestHandler):
 
             entry = next_unmatched(QUEUE, matches)
             if entry is None:
-                self._send_json({"done": True, "overall_progress": f"{total_done}/{len(QUEUE)}"})
+                self._send_json({
+                    "done": True,
+                    "overall_progress": f"{total_done}/{len(QUEUE)}",
+                    "counts": counts,
+                })
                 return
 
             specimen_cards = [q for q in QUEUE if q["source_image_file"] == entry["source_image_file"]]
@@ -266,6 +291,7 @@ class Handler(BaseHTTPRequestHandler):
                 "candidates": entry["candidates"],
                 "specimen_position": f"{position}/{len(specimen_cards)}",
                 "overall_progress": f"{total_done}/{len(QUEUE)}",
+                "counts": counts,
             })
             return
 
@@ -291,12 +317,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """Route POST /api/save."""
-        length = int(self.headers.get("Content-Length", 0))
-        payload = json.loads(self.rfile.read(length))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            payload = json.loads(self.rfile.read(length))
+        except (ValueError, json.JSONDecodeError):
+            self._send_json({"error": "malformed request body"}, status=400)
+            return
 
         if self.path == "/api/save":
-            crop_filename = payload["crop_filename"]
-            status = payload["status"]
+            try:
+                crop_filename = payload["crop_filename"]
+                status = payload["status"]
+            except KeyError:
+                self._send_json({"error": "malformed request body"}, status=400)
+                return
+
+            if status not in ("matched", "no_relevant_text", "skipped"):
+                self._send_json({"error": f"unknown status {status!r}"}, status=400)
+                return
+
+            entry = next((q for q in QUEUE if q["crop_filename"] == crop_filename), None)
+            if entry is None:
+                self._send_json(
+                    {"error": f"{crop_filename} is not in the queue -- reload the page"}, status=400
+                )
+                return
+
             selections = payload.get("selections", []) if status == "matched" else []
 
             if status == "matched" and not selections:
@@ -307,7 +353,6 @@ class Handler(BaseHTTPRequestHandler):
             matches[crop_filename] = {"status": status, "selections": selections}
             _save_json(MATCHES_PATH, matches)
 
-            entry = next(q for q in QUEUE if q["crop_filename"] == crop_filename)
             specimen_cards = [q for q in QUEUE if q["source_image_file"] == entry["source_image_file"]]
             is_last_card = specimen_cards[-1]["crop_filename"] == crop_filename
 
