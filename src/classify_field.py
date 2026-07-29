@@ -6,6 +6,7 @@ DATE_PATTERN = re.compile(
     rf"|\b({ROMAN_MONTH})[.\-/]\d{{2,4}}\b",
     re.IGNORECASE,
 )
+INITIAL_PATTERN = re.compile(r"^[a-zæøå]\.?$", re.IGNORECASE)
 
 CONFOUND_KEYWORDS = [
     "coll.", "coll ", "det.", "det ", "tilg.", "dania",
@@ -15,8 +16,13 @@ CONFOUND_KEYWORDS = [
 
 
 def classify_field(text):
+    """A bare single letter (with or without a trailing period, e.g. "J.")
+    is treated as confound: it's either a collector's initial or OCR
+    noise, never a meaningful date/locality on its own."""
     t = text.strip().lower()
     if any(kw in t for kw in CONFOUND_KEYWORDS):
+        return "confound"
+    if INITIAL_PATTERN.match(t):
         return "confound"
     if DATE_PATTERN.search(text.strip()):
         return "date"
