@@ -17,10 +17,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 MANIFEST_PATH = os.path.join("data", "processed", "card_crops", "manifest.csv")
 TRAIN_CSV = os.path.join("data", "raw", "train.csv")
 IMAGES_DIR = os.path.join("data", "processed", "card_crops", "images")
+ORIGINAL_IMAGES_DIR = os.path.join("data", "raw", "images")
 MATCHES_PATH = os.path.join("data", "processed", "card_crops", "card_text_matches.json")
 PORT = 8766
 
 QUEUE = []
+CURRENT_INDEX = 0
 
 
 def build_candidates(row):
@@ -116,11 +118,16 @@ INDEX_HTML = """<!doctype html>
   .selected-chip { display: inline-block; margin: 2px; padding: 4px 8px; background: #3399ff;
                     color: white; border-radius: 4px; cursor: pointer; }
   button.action { font-size: 16px; margin: 4px 8px 4px 0; padding: 8px 14px; }
+  button.nav { font-size: 14px; margin: 4px 8px 4px 0; padding: 6px 12px; background: #eee; }
   #banner { background: #fff3cd; border: 1px solid #ffe69c; padding: 10px; margin: 10px 0; display: none; }
   #done { display: none; font-size: 24px; }
 </style>
 </head>
 <body>
+  <div>
+    <button class="nav" onclick="goBack()" id="back-btn">◀ Atrás</button>
+    <button class="nav" onclick="openOriginal()" id="original-btn">Ver imagen original</button>
+  </div>
   <div id="progress"></div>
   <div id="banner"></div>
   <img id="crop">
@@ -140,10 +147,13 @@ let state = null;
 let selected = [];
 
 function render() {
+  document.getElementById('back-btn').disabled = !state.can_go_back;
+
   if (state.done) {
     document.getElementById('crop').style.display = 'none';
     document.getElementById('candidates').style.display = 'none';
     document.getElementById('selected-list').style.display = 'none';
+    document.getElementById('original-btn').style.display = 'none';
     document.querySelectorAll('button.action').forEach(b => b.style.display = 'none');
     document.getElementById('done').style.display = 'block';
     document.getElementById('progress').textContent = state.overall_progress +
@@ -151,12 +161,13 @@ function render() {
       `no_relevant_text: ${state.counts.no_relevant_text})`;
     return;
   }
+  document.getElementById('original-btn').style.display = 'inline-block';
   document.getElementById('progress').textContent =
     `tarjeta ${state.specimen_position} del espécimen -- total ${state.overall_progress} ` +
     `(matched: ${state.counts.matched}, skipped: ${state.counts.skipped}, ` +
     `no_relevant_text: ${state.counts.no_relevant_text})`;
   document.getElementById('crop').src = '/crop/' + state.crop_filename;
-  selected = [];
+  selected = state.existing_match ? state.existing_match.selections.slice() : [];
   renderCandidates();
   renderSelected();
 }
@@ -196,6 +207,23 @@ async function refresh() {
   state = await res.json();
   render();
 }
+
+async function goBack() {
+  await fetch('/api/back', { method: 'POST' });
+  await refresh();
+}
+
+function openOriginal() {
+  if (state && state.source_image_file) {
+    window.open('/original/' + state.source_image_file, '_blank');
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && state && !state.done) {
+    save('matched');
+  }
+});
 
 async function save(status) {
   if (status === 'matched' && selected.length === 0) {
@@ -257,7 +285,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        """Route GET / (the page), GET /api/state, and GET /crop/<filename>."""
+        """Route GET / (the page), GET /api/state, GET /crop/<filename>, and
+        GET /original/<filename>."""
         if self.path == "/":
             body = INDEX_HTML.encode("utf-8")
             self.send_response(200)
@@ -274,21 +303,25 @@ class Handler(BaseHTTPRequestHandler):
                 counts[m["status"]] = counts.get(m["status"], 0) + 1
             total_done = sum(counts.values())
 
-            entry = next_unmatched(QUEUE, matches)
-            if entry is None:
+            if CURRENT_INDEX >= len(QUEUE):
                 self._send_json({
                     "done": True,
+                    "can_go_back": CURRENT_INDEX > 0,
                     "overall_progress": f"{total_done}/{len(QUEUE)}",
                     "counts": counts,
                 })
                 return
 
+            entry = QUEUE[CURRENT_INDEX]
             specimen_cards = [q for q in QUEUE if q["source_image_file"] == entry["source_image_file"]]
             position = [c["crop_filename"] for c in specimen_cards].index(entry["crop_filename"]) + 1
             self._send_json({
                 "done": False,
+                "can_go_back": CURRENT_INDEX > 0,
                 "crop_filename": entry["crop_filename"],
+                "source_image_file": entry["source_image_file"],
                 "candidates": entry["candidates"],
+                "existing_match": matches.get(entry["crop_filename"]),
                 "specimen_position": f"{position}/{len(specimen_cards)}",
                 "overall_progress": f"{total_done}/{len(QUEUE)}",
                 "counts": counts,
@@ -297,31 +330,48 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path.startswith("/crop/"):
             filename = self.path[len("/crop/"):]
-            crop_path = os.path.join(IMAGES_DIR, filename)
-            same_dir = os.path.dirname(os.path.abspath(crop_path)) == os.path.abspath(IMAGES_DIR)
-            if not same_dir or not os.path.isfile(crop_path):
-                self.send_response(404)
-                self.end_headers()
-                return
-            with open(crop_path, "rb") as f:
-                body = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._serve_image(filename, IMAGES_DIR)
+            return
+
+        if self.path.startswith("/original/"):
+            filename = self.path[len("/original/"):]
+            self._serve_image(filename, ORIGINAL_IMAGES_DIR)
             return
 
         self.send_response(404)
         self.end_headers()
 
+    def _serve_image(self, filename, base_dir):
+        """Serve filename from base_dir as image/jpeg, 404ing if it escapes
+        base_dir or doesn't exist."""
+        image_path = os.path.join(base_dir, filename)
+        same_dir = os.path.dirname(os.path.abspath(image_path)) == os.path.abspath(base_dir)
+        if not same_dir or not os.path.isfile(image_path):
+            self.send_response(404)
+            self.end_headers()
+            return
+        with open(image_path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self):
-        """Route POST /api/save."""
+        """Route POST /api/save and POST /api/back."""
+        global CURRENT_INDEX
+
         try:
             length = int(self.headers.get("Content-Length", 0))
-            payload = json.loads(self.rfile.read(length))
+            payload = json.loads(self.rfile.read(length)) if length else {}
         except (ValueError, json.JSONDecodeError):
             self._send_json({"error": "malformed request body"}, status=400)
+            return
+
+        if self.path == "/api/back":
+            CURRENT_INDEX = max(0, CURRENT_INDEX - 1)
+            self._send_json({"ok": True})
             return
 
         if self.path == "/api/save":
@@ -364,6 +414,7 @@ class Handler(BaseHTTPRequestHandler):
                 ]
                 unused = unused_candidates(entry["candidates"], selections_by_card)
 
+            CURRENT_INDEX = min(len(QUEUE), CURRENT_INDEX + 1)
             self._send_json({"ok": True, "unused_candidates": unused})
             return
 
@@ -375,9 +426,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    """Build the queue, warn about any relevant specimen with zero detected
-    cards, then start the matching server and block until interrupted."""
-    global QUEUE
+    """Build the queue, resume at the first not-yet-matched card, warn about
+    any relevant specimen with zero detected cards, then start the matching
+    server and block until interrupted."""
+    global QUEUE, CURRENT_INDEX
 
     with open(MANIFEST_PATH, encoding="utf-8") as f:
         manifest_rows = list(csv.DictReader(f))
@@ -385,6 +437,10 @@ def main():
         train_rows = list(csv.DictReader(f))
 
     QUEUE = build_queue(manifest_rows, train_rows)
+
+    matches = _load_json(MATCHES_PATH, {})
+    resume_entry = next_unmatched(QUEUE, matches)
+    CURRENT_INDEX = QUEUE.index(resume_entry) if resume_entry is not None else len(QUEUE)
 
     detected_sources = {row["source_image_file"] for row in manifest_rows}
     missing = [row["image_file"] for row in train_rows

@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .pytest_cache/
+.playwright-mcp/
 
 # Competition data (images especially) is not committed to GitHub
 data/raw/
@@ -9,3 +10,6 @@ data/processed/
 models/
 tables_figures/eda/detection_review/
 tables_figures/eda/dassco_anchor_test/manual_inspection/
+tables_figures/eda/ocr_benchmark_*/
+tables_figures/eda/card_detection_variance_test/
+tables_figures/eda/sam_card_detection_test/*.jpeg

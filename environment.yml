@@ -6,6 +6,7 @@ dependencies:
   - python=3.11
   - ipykernel
   - pytest
+  - tesseract
   - pip
   - pip:
       - kaggle
@@ -14,3 +15,8 @@ dependencies:
       - pillow
       - scikit-learn
       - opencv-python-headless
+      - python-doctr[torch]
+      - easyocr
+      - pytesseract
+      - segment-anything
+      - tqdm
