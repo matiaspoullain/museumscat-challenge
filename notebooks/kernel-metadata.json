@@ -1,0 +1,19 @@
+{
+  "id": "matiaspoullain/museumscat-danish-recognizer-fine-tune-predict",
+  "title": "MuseumSCAT Danish recognizer fine tune predict",
+  "code_file": "kaggle_finetune_and_predict_danish.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": [
+    "matiaspoullain/museumscat-danish-recognizer-word-boxes",
+    "matiaspoullain/museum-card-crops-train-test"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

@@ -112,6 +112,39 @@ def _make_doctr_multilingual_words(det_arch):
 _doctr_multilingual_words = _make_doctr_multilingual_words("db_resnet50")
 _doctr_multilingual_fastdet_words = _make_doctr_multilingual_words("fast_base")
 
+FINETUNED_DANISH_CHECKPOINT = os.path.join("models", "reco_finetune_v2", "danish_crnn_vgg16_bn_stage2.pt")
+
+
+def _doctr_finetuned_danish_words(crop_bgr):
+    """Run doctr on a single crop using the Danish-vocab fine-tuned
+    crnn_vgg16_bn recognizer (see
+    docs/superpowers/plans/2026-07-29-card-word-boxes-danish-finetune.md),
+    return list of (text, confidence, (x1,y1,x2,y2)) in crop pixel
+    coordinates."""
+    import torch
+    from doctr.datasets import VOCABS
+    from doctr.models import ocr_predictor, recognition
+
+    if not hasattr(_doctr_finetuned_danish_words, "_predictor"):
+        reco_model = recognition.__dict__["crnn_vgg16_bn"](pretrained=False, vocab=VOCABS["danish"])
+        reco_model.load_state_dict(torch.load(FINETUNED_DANISH_CHECKPOINT, map_location="cpu", weights_only=True))
+        _doctr_finetuned_danish_words._predictor = ocr_predictor(
+            det_arch="db_resnet50", reco_arch=reco_model, pretrained=True, assume_straight_pages=True
+        )
+
+    h, w = crop_bgr.shape[:2]
+    crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+    result = _doctr_finetuned_danish_words._predictor([crop_rgb])
+
+    words = []
+    for page in result.pages:
+        for block in page.blocks:
+            for line in block.lines:
+                for word in line.words:
+                    (rx1, ry1), (rx2, ry2) = word.geometry
+                    words.append((word.value, word.confidence, (int(rx1 * w), int(ry1 * h), int(rx2 * w), int(ry2 * h))))
+    return words
+
 
 def _pytesseract_words(crop_bgr):
     """Run pytesseract on a single crop, return list of (text, confidence, (x1,y1,x2,y2))
@@ -136,6 +169,7 @@ ENGINES = {
     "doctr": _doctr_words,
     "doctr-multilingual": _doctr_multilingual_words,
     "doctr-multilingual-fastdet": _doctr_multilingual_fastdet_words,
+    "doctr-finetuned-danish": _doctr_finetuned_danish_words,
     "easyocr": _easyocr_words,
     "pytesseract": _pytesseract_words,
 }
