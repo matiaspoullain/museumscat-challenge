@@ -39,3 +39,23 @@ def test_classifies_confound_museum_boilerplate():
 
 def test_classifies_confound_dania():
     assert classify_field("Dania coll.") == "confound"
+
+
+def test_classifies_empty_string_as_confound():
+    assert classify_field("") == "confound"
+
+
+def test_classifies_bare_year_as_date():
+    assert classify_field("1994") == "date"
+    assert classify_field("1922") == "date"
+
+
+def test_classifies_short_number_noise_as_confound():
+    assert classify_field("1") == "confound"
+    assert classify_field("18") == "confound"
+    assert classify_field("166") == "confound"
+
+
+def test_classifies_ocr_misread_coll_as_confound():
+    assert classify_field("Loll.") == "confound"
+    assert classify_field("Løll.") == "confound"
