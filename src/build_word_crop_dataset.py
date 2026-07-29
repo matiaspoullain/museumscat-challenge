@@ -10,12 +10,21 @@ import json
 import os
 
 import cv2
+from doctr.datasets import VOCABS
 
 WORD_BOXES_PATH = os.path.join("data", "processed", "card_crops", "word_boxes.json")
 CARD_IMAGES_DIR = os.path.join("data", "processed", "card_crops", "images")
 DATASET_DIR = os.path.join("data", "processed", "reco_finetune_v2", "dataset")
 IMAGES_OUT_DIR = os.path.join(DATASET_DIR, "images")
 LABELS_PATH = os.path.join(DATASET_DIR, "labels.json")
+DANISH_VOCAB = set(VOCABS["danish"])
+
+
+def has_out_of_vocab_chars(text, vocab):
+    """True if any character in text is missing from vocab (a set of
+    allowed characters) -- doctr's CTC training crashes on such labels
+    (e.g. archaic 'ÿ' spellings aren't in doctr's built-in danish vocab)."""
+    return bool(set(text) - vocab)
 
 
 def union_box(boxes):
@@ -32,18 +41,23 @@ def union_box(boxes):
 def build_dataset():
     """Crop every boxed (non-skipped) word from word_boxes.json out of its
     source card image, save it under IMAGES_OUT_DIR, and write labels.json
-    in doctr's {filename: text} training format. Returns (crop_count,
-    multi_box_count)."""
+    in doctr's {filename: text} training format. Words whose text contains
+    a character outside doctr's danish vocab are skipped (they'd crash CTC
+    training). Returns (crop_count, multi_box_count, out_of_vocab_count)."""
     os.makedirs(IMAGES_OUT_DIR, exist_ok=True)
     with open(WORD_BOXES_PATH, encoding="utf-8") as f:
         word_boxes = json.load(f)
 
     labels = {}
     multi_box_count = 0
+    out_of_vocab_count = 0
     for crop_filename, words in word_boxes.items():
         card_img = None
         for w in words:
             if not w["boxes"]:
+                continue
+            if has_out_of_vocab_chars(w["text"], DANISH_VOCAB):
+                out_of_vocab_count += 1
                 continue
             if len(w["boxes"]) > 1:
                 multi_box_count += 1
@@ -58,10 +72,11 @@ def build_dataset():
     with open(LABELS_PATH, "w", encoding="utf-8") as f:
         json.dump(labels, f, ensure_ascii=False, indent=2)
 
-    return len(labels), multi_box_count
+    return len(labels), multi_box_count, out_of_vocab_count
 
 
 if __name__ == "__main__":
-    n, multi = build_dataset()
+    n, multi, out_of_vocab = build_dataset()
     print(f"Wrote {n} word crops to {IMAGES_OUT_DIR} ({multi} words had more than one box)")
+    print(f"Skipped {out_of_vocab} words with characters outside doctr's danish vocab")
     print(f"Labels: {LABELS_PATH}")
