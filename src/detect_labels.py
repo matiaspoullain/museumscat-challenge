@@ -15,7 +15,7 @@ FURNITURE_X_RATIO = 1.21
 
 BRIGHTNESS_THRESHOLD = 140
 OPEN_KERNEL = 21
-PADDING = 30
+PADDING = -50
 
 # Below this, don't bother rotating — noise in the DaSSCo blob's own edges
 # produces angle jitter of this order even on a perfectly straight photo.

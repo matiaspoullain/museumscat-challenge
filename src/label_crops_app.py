@@ -1,22 +1,34 @@
 """Local web app for manually transcribing the word crops extracted by
 extract_reco_crops.py. Writes labels.json incrementally in doctr's
 RecognitionDataset format (https://github.com/mindee/doctr/blob/main/references/recognition/README.md)
-so progress is never lost.
+so progress is never lost. Also writes confidences.json ({filename: 0-1
+float}, default 1.0) alongside it, for the labeler's own self-reported
+confidence in each transcription -- kept in a separate file since doctr's
+training script requires labels.json to be exactly {filename: text}.
+Candidates are served least-doctr-confident first (see next_unlabeled) and
+the text field is prefilled with doctr's own guess, so the labeler mostly
+confirms or corrects rather than transcribing from scratch.
 
 Usage:
     conda run -n museumscat-challenge python -m src.label_crops_app
 Then open http://localhost:8765 in a browser (WSL2 forwards localhost to Windows automatically).
 """
+import csv
 import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 DATASET_DIR = os.path.join("data", "processed", "reco_finetune", "dataset")
 IMAGES_DIR = os.path.join(DATASET_DIR, "images")
+ORIGINAL_IMAGES_DIR = os.path.join("data", "raw", "images")
+TRAIN_CSV = os.path.join("data", "raw", "train.csv")
 CANDIDATES_PATH = os.path.join(DATASET_DIR, "candidates.json")
 LABELS_PATH = os.path.join(DATASET_DIR, "labels.json")
 SKIPPED_PATH = os.path.join(DATASET_DIR, "skipped.json")
 NEEDS_HELP_PATH = os.path.join(DATASET_DIR, "needs_help.json")
+CONFIDENCES_PATH = os.path.join(DATASET_DIR, "confidences.json")
+DEFAULT_CONFIDENCE = 1.0
 PORT = 8765
 
 DANISH_CHARS = ["æ", "ø", "å", "Æ", "Ø", "Å"]
@@ -32,38 +44,63 @@ INDEX_HTML = """<!doctype html>
   #text { font-size: 20px; width: 100%; box-sizing: border-box; margin: 10px 0; }
   button { font-size: 16px; margin: 4px; padding: 6px 12px; }
   #progress { color: #666; }
+  #doctr-info { color: #666; font-style: italic; min-height: 1.2em; }
+  #ground-truth { color: #364; background: #eef7ee; padding: 4px 8px; border-radius: 4px; min-height: 1.2em; }
   #done { display: none; font-size: 24px; }
 </style>
 </head>
 <body>
   <div id="progress"></div>
+  <div id="ground-truth"></div>
   <img id="crop">
+  <div id="doctr-info"></div>
   <div>
     <input id="text" autocomplete="off" placeholder="transcribe this word">
   </div>
   <div id="danish-buttons"></div>
+  <div>
+    <label for="confidence">confidence: <span id="confidence-value">1.0</span></label><br>
+    <input id="confidence" type="range" min="0" max="1" step="0.1" value="1">
+  </div>
   <button onclick="save()">Save &amp; next (Enter)</button>
   <button onclick="skip()">Skip (illegible)</button>
   <button onclick="needsHelp()">Ask Claude for help</button>
+  <button onclick="goBack()">&laquo; Back (fix a mistake)</button>
+  <button onclick="openOriginal()">Open original image</button>
   <div id="done">All candidates handled.</div>
 
 <script>
 let state = null;
+let history = [];
+let viewingHistory = false;
 
-function render() {
+function render(prefill) {
   if (!state.filename) {
     document.getElementById('crop').style.display = 'none';
     document.getElementById('done').style.display = 'block';
     return;
   }
+  document.getElementById('crop').style.display = '';
+  document.getElementById('done').style.display = 'none';
   document.getElementById('progress').textContent =
-    `${state.labeled} labeled, ${state.skipped} skipped, ${state.needs_help} need help / ${state.total} total`;
+    `${state.labeled} labeled, ${state.skipped} skipped, ${state.needs_help} need help / ${state.total} total` +
+    (viewingHistory ? ' -- editing a previous crop' : '');
   document.getElementById('crop').src = '/crop/' + state.filename;
-  document.getElementById('text').value = '';
+  document.getElementById('ground-truth').textContent =
+    `this card's known transcription -- date: "${state.true_verbatim_date}", locality: "${state.true_verbatim_locality}"`;
+  document.getElementById('doctr-info').textContent =
+    state.doctr_text !== null && state.doctr_text !== undefined
+      ? `doctr's guess: "${state.doctr_text}" (confidence ${state.doctr_confidence.toFixed(2)})`
+      : '';
+  document.getElementById('text').value = prefill && prefill.text ? prefill.text : (state.doctr_text || '');
+  const conf = prefill && prefill.confidence !== null && prefill.confidence !== undefined ? prefill.confidence : 1;
+  document.getElementById('confidence').value = String(conf);
+  document.getElementById('confidence-value').textContent = parseFloat(conf).toFixed(1);
   document.getElementById('text').focus();
 }
 
 async function refresh() {
+  viewingHistory = false;
   const res = await fetch('/api/state');
   state = await res.json();
   render();
@@ -80,23 +117,57 @@ async function save() {
     alert('Text must be non-empty and contain no spaces (one word per crop).');
     return;
   }
-  const result = await post('/api/label', { filename: state.filename, text: text });
+  const confidence = parseFloat(document.getElementById('confidence').value);
+  const result = await post('/api/label', { filename: state.filename, text: text, confidence: confidence });
   if (result.error) { alert(result.error); return; }
+  if (!viewingHistory) history.push(state.filename);
   await refresh();
 }
 
 async function skip() {
+  if (!viewingHistory) history.push(state.filename);
   await post('/api/skip', { filename: state.filename });
   await refresh();
 }
 
 async function needsHelp() {
+  if (!viewingHistory) history.push(state.filename);
   await post('/api/needs_help', { filename: state.filename });
   await refresh();
 }
 
+function openOriginal() {
+  if (!state.source) return;
+  window.open('/original/' + encodeURIComponent(state.source), '_blank');
+}
+
+async function goBack() {
+  if (history.length === 0) {
+    alert('No previous crop to go back to.');
+    return;
+  }
+  const filename = history.pop();
+  const res = await fetch('/api/item?filename=' + encodeURIComponent(filename));
+  const item = await res.json();
+  viewingHistory = true;
+  state = {
+    ...state,
+    filename: filename,
+    doctr_text: item.doctr_text,
+    doctr_confidence: item.doctr_confidence,
+    source: item.source,
+    true_verbatim_date: item.true_verbatim_date,
+    true_verbatim_locality: item.true_verbatim_locality,
+  };
+  render(item);
+}
+
 document.getElementById('text').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') save();
+});
+
+document.getElementById('confidence').addEventListener('input', (e) => {
+  document.getElementById('confidence-value').textContent = parseFloat(e.target.value).toFixed(1);
 });
 
 const buttonsDiv = document.getElementById('danish-buttons');
@@ -137,12 +208,37 @@ def _save_json(path, data):
     os.replace(tmp_path, path)
 
 
+def load_train_lookup(path):
+    """Map image_file -> {verbatimDate, verbatimLocality} from train.csv, for
+    displaying the known field transcription as a labeling guide. {} if the
+    file doesn't exist."""
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return {
+            row["image_file"]: {
+                "verbatimDate": row["verbatimDate"],
+                "verbatimLocality": row["verbatimLocality"],
+            }
+            for row in csv.DictReader(f)
+        }
+
+
+TRAIN_LOOKUP = load_train_lookup(TRAIN_CSV)
+
+
 def next_unlabeled(candidates, labels, skipped):
-    """First candidate filename not yet in labels or skipped, or None if done."""
-    for filename in candidates:
-        if filename not in labels and filename not in skipped:
-            return filename
-    return None
+    """Candidate filename not yet in labels or skipped with the lowest doctr
+    confidence (least reliable, most worth a human look first), or None if done."""
+    remaining = [f for f in candidates if f not in labels and f not in skipped]
+    if not remaining:
+        return None
+    return min(remaining, key=lambda f: candidates[f]["doctr_confidence"])
+
+
+def is_valid_confidence(value):
+    """True if value is a number in [0, 1] (bool excluded, since bool is an int subclass)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -158,8 +254,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        """Route GET / (the page), GET /api/state, and GET /crop/<filename>."""
-        if self.path == "/":
+        """Route GET / (the page), GET /api/state, GET /api/item, GET /crop/<filename>,
+        and GET /original/<filename> (the full source photo the crop was taken from)."""
+        parsed = urlsplit(self.path)
+
+        if parsed.path == "/":
             body = INDEX_HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -168,14 +267,21 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path == "/api/state":
+        if parsed.path == "/api/state":
             candidates = _load_json(CANDIDATES_PATH, {})
             labels = _load_json(LABELS_PATH, {})
             skipped = _load_json(SKIPPED_PATH, [])
             needs_help = _load_json(NEEDS_HELP_PATH, [])
             filename = next_unlabeled(candidates, labels, skipped)
+            candidate = candidates.get(filename, {})
+            ground_truth = TRAIN_LOOKUP.get(candidate.get("source"), {})
             self._send_json({
                 "filename": filename,
+                "source": candidate.get("source"),
+                "doctr_text": candidate.get("doctr_text"),
+                "doctr_confidence": candidate.get("doctr_confidence"),
+                "true_verbatim_date": ground_truth.get("verbatimDate"),
+                "true_verbatim_locality": ground_truth.get("verbatimLocality"),
                 "labeled": len(labels),
                 "skipped": len(skipped),
                 "needs_help": len(needs_help),
@@ -183,25 +289,54 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if parsed.path == "/api/item":
+            query = parse_qs(parsed.query)
+            filename = query.get("filename", [None])[0]
+            labels = _load_json(LABELS_PATH, {})
+            confidences = _load_json(CONFIDENCES_PATH, {})
+            candidates = _load_json(CANDIDATES_PATH, {})
+            candidate = candidates.get(filename, {})
+            ground_truth = TRAIN_LOOKUP.get(candidate.get("source"), {})
+            self._send_json({
+                "filename": filename,
+                "text": labels.get(filename),
+                "confidence": confidences.get(filename),
+                "source": candidate.get("source"),
+                "doctr_text": candidate.get("doctr_text"),
+                "doctr_confidence": candidate.get("doctr_confidence"),
+                "true_verbatim_date": ground_truth.get("verbatimDate"),
+                "true_verbatim_locality": ground_truth.get("verbatimLocality"),
+            })
+            return
+
         if self.path.startswith("/crop/"):
             filename = self.path[len("/crop/"):]
-            crop_path = os.path.join(IMAGES_DIR, filename)
-            same_dir = os.path.dirname(os.path.abspath(crop_path)) == os.path.abspath(IMAGES_DIR)
-            if not same_dir or not os.path.isfile(crop_path):
-                self.send_response(404)
-                self.end_headers()
-                return
-            with open(crop_path, "rb") as f:
-                body = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "image/png")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._serve_file(IMAGES_DIR, filename, "image/png")
+            return
+
+        if self.path.startswith("/original/"):
+            filename = self.path[len("/original/"):]
+            self._serve_file(ORIGINAL_IMAGES_DIR, filename, "image/jpeg")
             return
 
         self.send_response(404)
         self.end_headers()
+
+    def _serve_file(self, directory, filename, content_type):
+        """Serve filename from directory, guarding against escaping it via '..' or absolute paths."""
+        file_path = os.path.join(directory, filename)
+        same_dir = os.path.dirname(os.path.abspath(file_path)) == os.path.abspath(directory)
+        if not same_dir or not os.path.isfile(file_path):
+            self.send_response(404)
+            self.end_headers()
+            return
+        with open(file_path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         """Route POST /api/label, /api/skip, /api/needs_help."""
@@ -214,9 +349,16 @@ class Handler(BaseHTTPRequestHandler):
             if not text or " " in text:
                 self._send_json({"error": "text must be non-empty and contain no spaces"}, status=400)
                 return
+            confidence = payload.get("confidence", DEFAULT_CONFIDENCE)
+            if not is_valid_confidence(confidence):
+                self._send_json({"error": "confidence must be a number between 0 and 1"}, status=400)
+                return
             labels = _load_json(LABELS_PATH, {})
             labels[filename] = text
             _save_json(LABELS_PATH, labels)
+            confidences = _load_json(CONFIDENCES_PATH, {})
+            confidences[filename] = confidence
+            _save_json(CONFIDENCES_PATH, confidences)
             self._send_json({"ok": True})
             return
 

@@ -9,3 +9,4 @@ data/processed/
 models/
 tables_figures/eda/detection_review/
 tables_figures/eda/dassco_anchor_test/manual_inspection/
+tables_figures/eda/ocr_benchmark_*/
