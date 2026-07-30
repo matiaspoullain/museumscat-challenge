@@ -22,6 +22,27 @@ not just the transcription — a confident wrong answer is penalized more than a
 one. Submission columns, exact order:
 `image_file,verbatimDate,verbatimDate_confidence,verbatimLocality,verbatimLocality_confidence`.
 
+## Status: work stopped here (2026-07-30)
+
+The user decided to stop working on this competition. The full end-to-end pipeline
+(detection → OCR → field classification → multi-card merge → visual relevance filter →
+submission) is built and passes its test suite. Local dev-set numbers (200 labeled
+specimens, see `docs/superpowers/plans/2026-07-29-submission-pipeline.md`'s "Outcome"
+section for the full breakdown):
+
+- Baseline: overall AURC 0.617 (`verbatimDate` 0.536, `verbatimLocality` 0.698).
+- With the visual card-relevance filter (`src/card_relevance_visual.py`, added after the
+  submission-pipeline plan): overall AURC **0.576** (`verbatimDate` 0.538, `verbatimLocality`
+  0.613) — the pipeline's best local result, and what `src/generate_submission.py` uses
+  by default.
+
+`data/processed/submission.csv` (3300 rows, `validate_submission`-clean) was generated
+locally but **never submitted to Kaggle** — `kaggle competitions submit` is a deliberate,
+user-triggered action per this repo's conventions, and work stopped before that step.
+Confidence calibration (isotonic regression, see that same doc's "Deferred" section) is
+the highest-leverage next step if this resumes — both fields' AURC is well above their
+NED, meaning raw confidence is poorly calibrated relative to actual correctness.
+
 ## Repo structure
 
 Single repo, no git submodules (unlike `../bayesian-kaggle`, which this repo's scaffolding
@@ -36,10 +57,15 @@ submodule-per-competition setup).
   `conda run -n museumscat-challenge python src/download_kaggle_data.py`.
 - `kaggle_meta/` — committed. Small text: competition rules/description pages + file listing.
 - `tests/` — pytest, mirrors `src/` module names.
-- `docs/superpowers/plans/` — implementation plans. Current one:
-  `2026-07-24-museumscat-ocr-pipeline.md` — read this for the pipeline architecture
-  (label-card detection → OCR the crops only → classify field type → merge multi-card →
-  calibrate confidence → generate submission) and task-by-task status.
+- `docs/superpowers/plans/` — implementation plans, in chronological/supersession order:
+  `2026-07-24-museumscat-ocr-pipeline.md` (original architecture, tasks 6-8 superseded) →
+  `2026-07-24-danish-recognizer-finetune.md` (first recognizer fine-tune, superseded — see
+  its own status note) → `2026-07-28-card-label-matching-app.md` →
+  `2026-07-29-card-word-boxes-danish-finetune.md` (current recognizer) →
+  `2026-07-29-submission-pipeline.md` — **read this one first**, it's the current
+  end-to-end pipeline (card-crop manifest → per-word OCR → line reconstruction → field
+  classification → multi-card merge → generate submission) and has the final results
+  in its "Outcome" section.
 - `tables_figures/eda/` — EDA outputs (grids, notes). Small/committed unless it's a
   derived-from-raw-images preview, in which case gitignore it.
 

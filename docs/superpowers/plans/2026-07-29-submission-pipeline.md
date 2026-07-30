@@ -32,7 +32,7 @@
 - [x] `data/processed/card_crops/manifest.csv` — `crop_filename, source_image_file, card_index, x1, y1, x2, y2` (card bounding box within the original specimen photo). Covers every card crop across the full corpus (train+test), not just the 200 labeled specimens.
 - [x] `data/processed/card_crops/predictions.csv` — currently `crop_filename, predicted_text, confidence` **only**, one row per recognized word, all line/order/position information already discarded by the current `predict_shard.py` (see `notebooks/kaggle_finetune_and_predict_danish.ipynb` Cell 8). **This is gap #2 — Task 1 fixes it.**
 - [x] `data/raw/train.csv` — 200 labeled specimens, columns `image_file, verbatimDate, verbatimDate_confidence, verbatimLocality, verbatimLocality_confidence` (ground truth, confidence columns always 1 here). `data/raw/test.csv` — 3300 rows, `image_file` only.
-- [ ] Nothing currently connects manifest -> predictions -> `train.csv`/`test.csv` rows. **Gap #1 — Tasks 3-4 fix it.**
+- [x] Nothing currently connects manifest -> predictions -> `train.csv`/`test.csv` rows. **Gap #1 — Tasks 3-4 fix it.**
 
 ---
 
@@ -47,7 +47,7 @@
 - Produces: `rows_from_result(result, crop_filename: str) -> list[dict]`, one dict per recognized word with keys `crop_filename, block_index, line_index, word_index, predicted_text, confidence, x1, y1, x2, y2` (the last four: relative `[0,1]` bounding box from doctr's `word.geometry`). Task 2 consumes CSVs written in exactly this schema.
 - Duck-types doctr's result object (`result.pages[i].blocks[j].lines[k].words[l]`, each word having `.value`, `.confidence`, `.geometry`) rather than importing doctr, so this logic is unit-testable without the (large, torch-based) doctr dependency installed locally.
 
-- [ ] **Step 1: Write failing tests using a fake doctr-shaped result**
+- [x] **Step 1: Write failing tests using a fake doctr-shaped result**
 
 ```python
 # tests/test_predict_cards.py
@@ -117,12 +117,12 @@ def test_rows_from_result_indexes_multiple_blocks_and_lines():
     ]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_predict_cards.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.predict_cards'`
 
-- [ ] **Step 3: Implement `rows_from_result`**
+- [x] **Step 3: Implement `rows_from_result`**
 
 ```python
 # src/predict_cards.py
@@ -148,19 +148,19 @@ def rows_from_result(result, crop_filename):
     return rows
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_predict_cards.py -v`
 Expected: 3 passed
 
-- [ ] **Step 5: Commit the local, tested logic**
+- [x] **Step 5: Commit the local, tested logic**
 
 ```bash
 git add src/predict_cards.py tests/test_predict_cards.py
 git commit -m "feat: preserve block/line/word index and geometry when flattening OCR results"
 ```
 
-- [ ] **Step 6: Mirror the same logic into the notebook's inline `predict_shard.py` source**
+- [x] **Step 6: Mirror the same logic into the notebook's inline `predict_shard.py` source**
 
 `notebooks/kaggle_finetune_and_predict_danish.ipynb` Cell 8 currently writes a self-contained `predict_shard.py` to `/kaggle/working/` via a single `f.write("...")` call with escaped `\n`s (the notebook has no access to this repo's `src/`, so the logic must be duplicated inline, not imported — this is the existing convention for every Kaggle-side script in this notebook). Replace that cell's source with:
 
@@ -228,14 +228,14 @@ print("wrote /kaggle/working/predict_shard.py")
 
 (Switched from the old single-escaped-line string to a triple-quoted one — same cell, same job, but a hand-edited multi-line script embedded as one `\n`-escaped line is error-prone to review; this is a readability fix, not a behavior change beyond the new columns.) Also update Cell 8's markdown header to mention block/line/word index and geometry are now preserved. Cells 8b, 9, 10, 11 need no changes — the two-shard run, the log-tailing, and the `pd.concat` merge all work unchanged with the wider column set.
 
-- [ ] **Step 7: Commit the notebook edit**
+- [x] **Step 7: Commit the notebook edit**
 
 ```bash
 git add notebooks/kaggle_finetune_and_predict_danish.ipynb
 git commit -m "feat: record line/word order and position in Kaggle prediction script"
 ```
 
-- [ ] **Step 8 (manual, on Kaggle — not run by this session): rerun the notebook's Cells 7-11**
+- [x] **Step 8 (manual, on Kaggle — not run by this session): rerun the notebook's Cells 7-11**
 
 The Stage 1/2 fine-tune checkpoints don't need retraining — only Cells 7 onward (locate card-crops dataset, write the updated `predict_shard.py`, run both GPU shards, merge). This reprocesses all ~6,500+ card crops with the existing fine-tuned checkpoint, now saving line/position. Download the resulting `/kaggle/working/predictions.csv` and overwrite `data/processed/card_crops/predictions.csv` locally (back up the old word-only file first, e.g. to `predictions.csv.bak`, since Task 5 needs the *new* format to produce a real number — the old file has no `block_index`/`line_index`/`word_index` columns and `src.pipeline.load_predictions`, Task 3, will `KeyError` on it by design, not silently degrade).
 
@@ -251,7 +251,7 @@ The Stage 1/2 fine-tune checkpoints don't need retraining — only Cells 7 onwar
 - Consumes: dicts shaped like Task 1's `rows_from_result` output (or rows read from the regenerated `predictions.csv` — same schema either way).
 - Produces: `group_into_lines(word_rows: list[dict]) -> dict[str, list[dict]]` — `crop_filename -> ordered list of {"text": str, "confidence": float}` line dicts, words within a line joined by a single space in `word_index` order, lines ordered by `(block_index, line_index)` (doctr's own reading order). Task 3 consumes this directly.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 # tests/test_reconstruct_lines.py
@@ -293,12 +293,12 @@ def test_separates_different_crops():
     assert set(result.keys()) == {"a.jpeg", "b.jpeg"}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_reconstruct_lines.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.reconstruct_lines'`
 
-- [ ] **Step 3: Implement `group_into_lines`**
+- [x] **Step 3: Implement `group_into_lines`**
 
 ```python
 # src/reconstruct_lines.py
@@ -320,12 +320,12 @@ def group_into_lines(word_rows):
     return lines_by_crop
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_reconstruct_lines.py -v`
 Expected: 4 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/reconstruct_lines.py tests/test_reconstruct_lines.py
@@ -349,7 +349,7 @@ git commit -m "feat: reconstruct reading-ordered lines from per-word predictions
   - `load_predictions(path: str) -> dict[str, list[dict]]` — reads the regenerated `predictions.csv` and returns `group_into_lines`'s output.
   - `run_pipeline(image_files: list[str], manifest_by_image: dict, lines_by_crop: dict) -> dict[str, dict]` — `image_file -> process_specimen(...)` result, for every requested `image_file` (specimens absent from the manifest default to no cards, i.e. `"MISSING"`). Task 4 calls this to build submission rows; Task 5 calls it to score against `train.csv`.
 
-- [ ] **Step 1: Write failing tests for `classify_card_field_values`**
+- [x] **Step 1: Write failing tests for `classify_card_field_values`**
 
 ```python
 # tests/test_pipeline.py
@@ -376,12 +376,12 @@ def test_classify_card_field_values_empty_lines_is_empty_dict():
     assert classify_card_field_values([]) == {}
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_pipeline.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.pipeline'`
 
-- [ ] **Step 3: Implement `classify_card_field_values`**
+- [x] **Step 3: Implement `classify_card_field_values`**
 
 ```python
 # src/pipeline.py
@@ -411,12 +411,12 @@ def classify_card_field_values(lines):
     return values
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_pipeline.py -v -k classify_card_field_values`
 Expected: 4 passed
 
-- [ ] **Step 5: Write failing tests for `process_specimen`**
+- [x] **Step 5: Write failing tests for `process_specimen`**
 
 Update the import line at the top of `tests/test_pipeline.py` to `from src.pipeline import classify_card_field_values, process_specimen` (it isn't implemented yet — this makes Step 6's failure an `ImportError`, not a collection error masking it), then append:
 
@@ -442,12 +442,12 @@ def test_process_specimen_ignores_crops_with_no_recorded_lines():
     assert result["verbatimDate"] == ("MISSING", 0.5)
 ```
 
-- [ ] **Step 6: Run tests to verify they fail**
+- [x] **Step 6: Run tests to verify they fail**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_pipeline.py -v -k process_specimen`
 Expected: FAIL with `ImportError: cannot import name 'process_specimen'`
 
-- [ ] **Step 7: Implement `process_specimen`**
+- [x] **Step 7: Implement `process_specimen`**
 
 ```python
 def process_specimen(crop_filenames, lines_by_crop):
@@ -462,12 +462,12 @@ def process_specimen(crop_filenames, lines_by_crop):
     }
 ```
 
-- [ ] **Step 8: Run tests to verify they pass**
+- [x] **Step 8: Run tests to verify they pass**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_pipeline.py -v -k process_specimen`
 Expected: 3 passed
 
-- [ ] **Step 9: Write failing tests for `run_pipeline`**
+- [x] **Step 9: Write failing tests for `run_pipeline`**
 
 Update the import line to `from src.pipeline import classify_card_field_values, process_specimen, run_pipeline`, then append:
 
@@ -480,12 +480,12 @@ def test_run_pipeline_defaults_absent_specimens_to_missing():
     assert result["b.jpeg"]["verbatimLocality"] == ("MISSING", 0.5)
 ```
 
-- [ ] **Step 10: Run test to verify it fails**
+- [x] **Step 10: Run test to verify it fails**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_pipeline.py -v -k run_pipeline`
 Expected: FAIL with `ImportError: cannot import name 'run_pipeline'`
 
-- [ ] **Step 11: Implement `run_pipeline` and the CSV loaders**
+- [x] **Step 11: Implement `run_pipeline` and the CSV loaders**
 
 ```python
 def run_pipeline(image_files, manifest_by_image, lines_by_crop):
@@ -523,12 +523,12 @@ def load_predictions(path):
     return group_into_lines(rows)
 ```
 
-- [ ] **Step 12: Run the full test file**
+- [x] **Step 12: Run the full test file**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_pipeline.py -v`
 Expected: 8 passed
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 ```bash
 git add src/pipeline.py tests/test_pipeline.py
@@ -547,7 +547,7 @@ git commit -m "feat: assemble per-specimen date/locality fields from card-crop p
 - Consumes: `run_pipeline`, `load_manifest`, `load_predictions` (Task 3).
 - Produces: `REQUIRED_COLUMNS`, `validate_submission(df: pandas.DataFrame, expected_image_files: set[str]) -> list[str]` (empty list = valid), `build_submission_df(image_files: list[str], manifest_by_image: dict, lines_by_crop: dict) -> pandas.DataFrame`, and a CLI entry point `generate_submission(manifest_path, predictions_path, csv_path, output_path)` writing `data/processed/submission.csv`.
 
-- [ ] **Step 1: Write failing tests for `validate_submission`**
+- [x] **Step 1: Write failing tests for `validate_submission`**
 
 ```python
 # tests/test_generate_submission.py
@@ -597,12 +597,12 @@ def test_missing_image_file_is_an_error():
     assert any("b.jpeg" in e for e in errors)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_generate_submission.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.generate_submission'`
 
-- [ ] **Step 3: Implement `REQUIRED_COLUMNS` and `validate_submission`**
+- [x] **Step 3: Implement `REQUIRED_COLUMNS` and `validate_submission`**
 
 ```python
 # src/generate_submission.py
@@ -640,12 +640,12 @@ def validate_submission(df, expected_image_files):
     return errors
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_generate_submission.py -v`
 Expected: 5 passed
 
-- [ ] **Step 5: Write a failing test for `build_submission_df`**
+- [x] **Step 5: Write a failing test for `build_submission_df`**
 
 Update the import line at the top of `tests/test_generate_submission.py` to `from src.generate_submission import REQUIRED_COLUMNS, build_submission_df, validate_submission` (it isn't implemented yet — this makes Step 6's failure an `ImportError`, not a collection error masking it), then append:
 
@@ -659,12 +659,12 @@ def test_build_submission_df_has_one_row_per_image_file_in_required_column_order
     assert df.set_index("image_file").loc["b.jpeg", "verbatimDate"] == "MISSING"
 ```
 
-- [ ] **Step 6: Run test to verify it fails**
+- [x] **Step 6: Run test to verify it fails**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_generate_submission.py -v -k build_submission_df`
 Expected: FAIL with `ImportError: cannot import name 'build_submission_df'`
 
-- [ ] **Step 7: Implement `build_submission_df` and the CLI entry point**
+- [x] **Step 7: Implement `build_submission_df` and the CLI entry point**
 
 ```python
 def build_submission_df(image_files, manifest_by_image, lines_by_crop):
@@ -706,12 +706,12 @@ if __name__ == "__main__":
     generate_submission(MANIFEST_PATH, PREDICTIONS_PATH, TEST_CSV, OUTPUT_CSV)
 ```
 
-- [ ] **Step 8: Run the full test file**
+- [x] **Step 8: Run the full test file**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_generate_submission.py -v`
 Expected: 6 passed
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/generate_submission.py tests/test_generate_submission.py
@@ -730,7 +730,7 @@ git commit -m "feat: add submission generation and validation"
 - Consumes: `best_pipe_ned`, `aurc` (`src/metrics.py`), `run_pipeline`/`load_manifest`/`load_predictions` (Task 3).
 - Produces: `score_predictions(predicted: dict[str, dict[str, tuple[str, float]]], ground_truth_df: pandas.DataFrame) -> dict` — `{"verbatimDate": {"mean_ned": float, "aurc": float}, "verbatimLocality": {...}}`, the pure scoring logic (unit-tested with fixtures). `main()` wires the real `data/raw/train.csv` + the regenerated `manifest.csv`/`predictions.csv` through `run_pipeline` and prints the report — this is the number the whole plan exists to produce, and it can only be trusted once Task 1's Kaggle rerun has replaced `predictions.csv` with the line-aware version.
 
-- [ ] **Step 1: Write failing tests for `score_predictions`**
+- [x] **Step 1: Write failing tests for `score_predictions`**
 
 ```python
 # tests/test_evaluate_local.py
@@ -769,12 +769,12 @@ def test_score_predictions_returns_aurc_key_per_field():
     assert "aurc" in report["verbatimLocality"]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_evaluate_local.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.evaluate_local'`
 
-- [ ] **Step 3: Implement `score_predictions` and `main`**
+- [x] **Step 3: Implement `score_predictions` and `main`**
 
 ```python
 # src/evaluate_local.py
@@ -824,19 +824,19 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `conda run -n museumscat-challenge python -m pytest tests/test_evaluate_local.py -v`
 Expected: 3 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/evaluate_local.py tests/test_evaluate_local.py
 git commit -m "feat: add local NED/AURC evaluation against the 200 labeled specimens"
 ```
 
-- [ ] **Step 6 (manual — the actual deliverable): run against the real 200-row dev set**
+- [x] **Step 6 (manual — the actual deliverable): run against the real 200-row dev set**
 
 Requires Task 1's regenerated `predictions.csv` to already be in place (Task 1 Step 8).
 
@@ -857,3 +857,29 @@ Expected: prints `verbatimDate: mean_ned=... aurc=...`, `verbatimLocality: mean_
 ## Deferred: Confidence calibration
 
 Not part of this plan. `[[project-danish-recognizer-finetune-decision]]` and `[[project-card-word-boxes-danish-finetune-result]]` both note the fine-tuned recognizer's raw confidence is poorly calibrated (confidently low even when correct) — AURC penalizes that. Per the user's own framing (2026-07-29): calibration only makes sense to build *after* Task 5 establishes a real baseline AURC to calibrate against — building it blind risks tuning against noise. Revisit as Task 8 of the original `2026-07-24-museumscat-ocr-pipeline.md` plan (isotonic regression via `sklearn.isotonic.IsotonicRegression`, already in `environment.yml`) once Task 5's numbers are in.
+
+---
+
+## Outcome (2026-07-30) — competition work stopped here
+
+Tasks 1-5 all executed, including their manual/Kaggle-side steps. Task 5 Step 6's real numbers against the 200-row dev set, run 2026-07-30:
+
+| | mean NED | AURC |
+|---|---|---|
+| verbatimDate | 0.601 | 0.536 |
+| verbatimLocality | 0.765 | 0.698 |
+| **overall (mean across fields)** | | **0.617** |
+
+A follow-up not in this plan's original scope — `src/card_relevance_visual.py`, a hand-crafted-feature random forest classifier that flags confound card crops (collector/determination labels) far more accurately than the keyword-based `classify_card_relevance` (0.870 vs 0.505 cross-validated accuracy, see `tables_figures/eda/card_visual_features/notes.md`) — was wired into `run_pipeline`/`process_specimen` as an optional `is_relevant` filter and measurably helps:
+
+| | mean NED | AURC |
+|---|---|---|
+| verbatimDate | 0.600 | 0.538 |
+| verbatimLocality | 0.699 | 0.613 |
+| **overall (mean across fields)** | | **0.576** |
+
+Overall AURC delta: **-0.042** (lower is better), almost entirely from `verbatimLocality` — dropping confound cards before line classification helps more than `classify_field`'s own per-line confound detection catches on its own. `src/generate_submission.py` applies this filter by default.
+
+**`data/processed/submission.csv` was generated** (3300 rows, passes `validate_submission`) using the visual-relevance-filtered pipeline, but **no Kaggle submission was ever made** — `kaggle competitions submit` is a deliberate, quota-costing, user-triggered action per this repo's conventions, and the user decided to stop working on this competition (2026-07-30) before reaching that point.
+
+**If this work resumes:** the highest-leverage next step per this doc's own numbers is confidence calibration (see "Deferred" above) — both fields' AURC is still much larger than their NED, meaning the raw doctr/random-forest confidence scores are badly miscalibrated relative to actual correctness, and AURC specifically penalizes that gap. Second candidate: investigating why `verbatimDate` (AURC 0.536-0.538) lags `verbatimLocality`'s relative improvement — the visual relevance filter barely moved it, so date errors likely have a different root cause (see `docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md`'s note on date-crop underrepresentation in the fine-tune training set, which may still apply to the current pipeline's OCR errors on dates specifically).
