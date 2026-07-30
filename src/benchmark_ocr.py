@@ -146,6 +146,52 @@ def _doctr_finetuned_danish_words(crop_bgr):
     return words
 
 
+FINETUNED_DANISH_V1_CHECKPOINT = os.path.join("models", "reco_finetune", "danish_crnn_vgg16_bn.pt")
+FINETUNED_DANISH_V1_STAGE1_CHECKPOINT = os.path.join("models", "reco_finetune", "danish_crnn_vgg16_bn_stage1.pt")
+FINETUNED_DANISH_V1_STAGE2_CHECKPOINT = os.path.join("models", "reco_finetune", "danish_crnn_vgg16_bn_stage2.pt")
+
+
+def _make_doctr_finetuned_danish_v1_words(checkpoint_path):
+    """Build a doctr-danish-vocab engine loading a checkpoint from the first,
+    superseded fine-tune iteration (see
+    docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md) -- kept
+    only for historical stage1-vs-stage2 comparison; the active engine is
+    _doctr_finetuned_danish_words above, from the v2 iteration. Returns a
+    run(crop_bgr) -> list[(text, confidence, (x1,y1,x2,y2))] closure."""
+
+    def run(crop_bgr):
+        import torch
+        from doctr.datasets import VOCABS
+        from doctr.models import ocr_predictor, recognition
+
+        if not hasattr(run, "_predictor"):
+            reco_model = recognition.__dict__["crnn_vgg16_bn"](pretrained=False, vocab=VOCABS["danish"])
+            reco_model.load_state_dict(torch.load(checkpoint_path, map_location="cpu", weights_only=True))
+            run._predictor = ocr_predictor(
+                det_arch="db_resnet50", reco_arch=reco_model, pretrained=True, assume_straight_pages=True
+            )
+
+        h, w = crop_bgr.shape[:2]
+        crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+        result = run._predictor([crop_rgb])
+
+        words = []
+        for page in result.pages:
+            for block in page.blocks:
+                for line in block.lines:
+                    for word in line.words:
+                        (rx1, ry1), (rx2, ry2) = word.geometry
+                        words.append((word.value, word.confidence, (int(rx1 * w), int(ry1 * h), int(rx2 * w), int(ry2 * h))))
+        return words
+
+    return run
+
+
+_doctr_finetuned_danish_v1_words = _make_doctr_finetuned_danish_v1_words(FINETUNED_DANISH_V1_CHECKPOINT)
+_doctr_finetuned_danish_v1_stage1_words = _make_doctr_finetuned_danish_v1_words(FINETUNED_DANISH_V1_STAGE1_CHECKPOINT)
+_doctr_finetuned_danish_v1_stage2_words = _make_doctr_finetuned_danish_v1_words(FINETUNED_DANISH_V1_STAGE2_CHECKPOINT)
+
+
 def _pytesseract_words(crop_bgr):
     """Run pytesseract on a single crop, return list of (text, confidence, (x1,y1,x2,y2))
     in crop pixel coordinates. Confidence is tesseract's own 0-100 scale, rescaled to 0-1."""
@@ -170,6 +216,9 @@ ENGINES = {
     "doctr-multilingual": _doctr_multilingual_words,
     "doctr-multilingual-fastdet": _doctr_multilingual_fastdet_words,
     "doctr-finetuned-danish": _doctr_finetuned_danish_words,
+    "doctr-finetuned-danish-v1": _doctr_finetuned_danish_v1_words,
+    "doctr-finetuned-danish-v1-stage1": _doctr_finetuned_danish_v1_stage1_words,
+    "doctr-finetuned-danish-v1-stage2": _doctr_finetuned_danish_v1_stage2_words,
     "easyocr": _easyocr_words,
     "pytesseract": _pytesseract_words,
 }

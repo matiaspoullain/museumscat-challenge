@@ -20,3 +20,4 @@ dependencies:
       - pytesseract
       - segment-anything
       - tqdm
+      - matplotlib

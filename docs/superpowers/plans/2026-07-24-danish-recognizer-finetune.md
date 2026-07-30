@@ -2,6 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status (2026-07-27): all 7 tasks executed.** The full story — three
+> fine-tune iterations (v1 broken, v2 fixed but under-trained, v3 converged),
+> two hybrid strategies tried and rejected (Danish-character presence,
+> raw cross-engine confidence), and the final recommendation — is recorded
+> in `tables_figures/eda/ocr_engine_comparison/notes.md` (search for
+> "Fine-tune retry v2"/"v3" and "Hybrid strategies tried"), not duplicated
+> here. Bottom line: don't adopt the fine-tuned recognizer as a standalone
+> engine; use it only for `verbatimLocality` in an unconditional per-field
+> hybrid with baseline doctr for `verbatimDate`.
+
 **Goal:** Fine-tune doctr's default `crnn_vgg16_bn` recognizer so its output vocabulary includes æøåÆØÅ, since `tables_figures/eda/ocr_engine_comparison/notes.md` showed the default recognizer beats every other tested engine/checkpoint except for literally being unable to emit those characters — first validated locally as a CPU smoke test, then run for real on Kaggle Notebooks' free GPU.
 
 **Architecture:** doctr's own `references/recognition/train.py` (vendored verbatim, pinned to the installed `python-doctr==1.0.1` tag) already supports exactly this recipe: build the model with `vocab="danish"` (built into doctr's `VOCABS`, already `english + "æøåÆØÅ"`) while loading the `--pretrained` backbone weights, and `--freeze-backbone` so only the reshaped final classification head trains. The new work is (1) building a small labeled word-crop dataset since we only have field-level ground truth, via a from-scratch human-labeling web app, and (2) wiring that dataset + the vendored script into a local CPU smoke test and a Kaggle GPU run.
@@ -505,6 +515,30 @@ Once some crops are flagged, tell Claude to proceed. Claude reads `data/processe
 
 Run: `conda run -n museumscat-challenge python -c "import json; print(len(json.load(open('data/processed/reco_finetune/dataset/labels.json'))))"`
 Expected: a count the user is satisfied with before moving to Task 5's split. No commit — `data/processed/` is gitignored.
+
+**Status (2026-07-27):** done. 518/518 candidates handled (490 labeled, 31 skipped, some overlap from
+back-and-forth edits), `needs_help.json` never populated so Step 2 had nothing to review.
+
+---
+
+## Backlog (not scheduled yet — ideas from the labeling session, plan before starting)
+
+While labeling, the user noticed the same doctr mistakes recurring often enough to be worth
+correcting systematically rather than one-off:
+
+- **Consistent-mistake dictionary:** a mapping of doctr's specific, repeatable misreadings
+  (e.g. a particular character/substring it reliably confuses) to the correct reading, built
+  from patterns seen across the 518 labeled crops. Applied as a post-processing correction step
+  on doctr's raw output, independent of (and probably before) the recognizer fine-tune itself.
+- **Common-word dictionary from train ground truth:** build a frequency list of real words from
+  `train.csv`'s `verbatimDate`/`verbatimLocality` values, then use it to correct/match doctr's
+  lowest-confidence word guesses (e.g. nearest-neighbor / edit-distance snap to the closest known
+  word) rather than trusting the raw low-confidence output as-is.
+
+Neither is started. Needs its own design pass before implementation (e.g.: where in the
+pipeline does the correction step slot in relative to `benchmark_ocr.py`'s engines and the
+Task 7 fine-tuned-checkpoint comparison; how to avoid the dictionary overfitting to the 200
+labeled train images and failing to generalize to the 3300 test images).
 
 ---
 
