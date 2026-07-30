@@ -48,3 +48,32 @@ def test_run_pipeline_defaults_absent_specimens_to_missing():
     result = run_pipeline(["a.jpeg", "b.jpeg"], manifest_by_image, lines_by_crop)
     assert result["a.jpeg"]["verbatimLocality"] == ("Kb", 0.9)
     assert result["b.jpeg"]["verbatimLocality"] == ("MISSING", 0.5)
+
+
+def test_process_specimen_drops_cards_flagged_not_relevant():
+    lines_by_crop = {
+        "a_card00.jpeg": [{"text": "Kb", "confidence": 0.9}],
+        "a_card01.jpeg": [{"text": "Hansen", "confidence": 0.8}],
+    }
+    result = process_specimen(
+        ["a_card00.jpeg", "a_card01.jpeg"], lines_by_crop, is_relevant=lambda c: c != "a_card01.jpeg"
+    )
+    assert result["verbatimLocality"] == ("Kb", 0.9)
+
+
+def test_process_specimen_is_relevant_none_keeps_default_behavior():
+    lines_by_crop = {"a_card00.jpeg": [{"text": "Kb", "confidence": 0.9}]}
+    result = process_specimen(["a_card00.jpeg"], lines_by_crop, is_relevant=None)
+    assert result["verbatimLocality"] == ("Kb", 0.9)
+
+
+def test_run_pipeline_passes_is_relevant_through():
+    lines_by_crop = {
+        "a_card00.jpeg": [{"text": "Kb", "confidence": 0.9}],
+        "a_card01.jpeg": [{"text": "Hansen", "confidence": 0.8}],
+    }
+    manifest_by_image = {"a.jpeg": ["a_card00.jpeg", "a_card01.jpeg"]}
+    result = run_pipeline(
+        ["a.jpeg"], manifest_by_image, lines_by_crop, is_relevant=lambda c: c != "a_card01.jpeg"
+    )
+    assert result["a.jpeg"]["verbatimLocality"] == ("Kb", 0.9)

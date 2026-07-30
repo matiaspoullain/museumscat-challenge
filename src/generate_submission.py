@@ -2,6 +2,7 @@ import os
 
 import pandas as pd
 
+from src.card_relevance_visual import compute_relevance_flags_for_specimens
 from src.pipeline import load_manifest, load_predictions, run_pipeline
 
 REQUIRED_COLUMNS = [
@@ -32,8 +33,8 @@ def validate_submission(df, expected_image_files):
     return errors
 
 
-def build_submission_df(image_files, manifest_by_image, lines_by_crop):
-    predicted = run_pipeline(image_files, manifest_by_image, lines_by_crop)
+def build_submission_df(image_files, manifest_by_image, lines_by_crop, is_relevant=None):
+    predicted = run_pipeline(image_files, manifest_by_image, lines_by_crop, is_relevant=is_relevant)
     rows = []
     for image_file in image_files:
         date_text, date_conf = predicted[image_file]["verbatimDate"]
@@ -53,7 +54,11 @@ def generate_submission(manifest_path, predictions_path, csv_path, output_path):
     manifest_by_image = load_manifest(manifest_path)
     lines_by_crop = load_predictions(predictions_path)
 
-    out_df = build_submission_df(image_files, manifest_by_image, lines_by_crop)
+    specimens = {os.path.splitext(f)[0] for f in image_files}
+    relevance_flags = compute_relevance_flags_for_specimens(specimens)
+    is_relevant = lambda crop_filename: relevance_flags.get(crop_filename, True)
+
+    out_df = build_submission_df(image_files, manifest_by_image, lines_by_crop, is_relevant=is_relevant)
     errors = validate_submission(out_df, set(image_files))
     if errors:
         raise ValueError(f"submission failed validation: {errors}")

@@ -24,7 +24,13 @@ def classify_card_field_values(lines):
     return values
 
 
-def process_specimen(crop_filenames, lines_by_crop):
+def process_specimen(crop_filenames, lines_by_crop, is_relevant=None):
+    """is_relevant: optional crop_filename -> bool predicate. When given, cards
+    it flags as not relevant (e.g. confound/collector labels) are dropped
+    before their lines are classified, instead of relying solely on
+    classify_field to filter out confound text line-by-line."""
+    if is_relevant is not None:
+        crop_filenames = [c for c in crop_filenames if is_relevant(c)]
     per_field_cards = {"date": [], "locality": []}
     for crop_filename in crop_filenames:
         card_values = classify_card_field_values(lines_by_crop.get(crop_filename, []))
@@ -36,9 +42,9 @@ def process_specimen(crop_filenames, lines_by_crop):
     }
 
 
-def run_pipeline(image_files, manifest_by_image, lines_by_crop):
+def run_pipeline(image_files, manifest_by_image, lines_by_crop, is_relevant=None):
     return {
-        image_file: process_specimen(manifest_by_image.get(image_file, []), lines_by_crop)
+        image_file: process_specimen(manifest_by_image.get(image_file, []), lines_by_crop, is_relevant)
         for image_file in image_files
     }
 
