@@ -21,3 +21,4 @@ dependencies:
       - segment-anything
       - tqdm
       - matplotlib
+      - google-genai
