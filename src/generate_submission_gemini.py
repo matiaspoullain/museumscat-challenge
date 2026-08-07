@@ -22,7 +22,11 @@ import os
 
 import pandas as pd
 
-from src.calibrate_gemini_confidence import load_predictions_by_crop, merge_predictions_by_specimen
+from src.calibrate_gemini_confidence import (
+    apply_wholeimage_fallback,
+    load_predictions_by_crop,
+    merge_predictions_by_specimen,
+)
 from src.clean_gemini_predictions import clean_merged_predictions
 from src.generate_submission import REQUIRED_COLUMNS, validate_submission
 from src.pipeline import load_manifest
@@ -30,14 +34,21 @@ from src.pipeline import load_manifest
 TEST_CSV_PATH = os.path.join("data", "raw", "test.csv")
 MANIFEST_PATH = os.path.join("data", "processed", "card_crops", "manifest.csv")
 TEST_PREDICTIONS_PATH = os.path.join("data", "processed", "gemini", "test_card_predictions.csv")
+TEST_WHOLEIMAGE_PREDICTIONS_PATH = os.path.join("data", "processed", "gemini",
+                                                 "test_wholeimage_predictions.csv")
 OUTPUT_PATH = os.path.join("data", "processed", "submission_gemini.csv")
 
 FIELDS = ("verbatimDate", "verbatimLocality")
 
 
-def build_submission_df(image_files, manifest_by_image, predictions_by_crop):
+def build_submission_df(image_files, manifest_by_image, predictions_by_crop,
+                         wholeimage_predictions_by_specimen=None):
     merged = merge_predictions_by_specimen(predictions_by_crop, manifest_by_image, image_files)
     cleaned = clean_merged_predictions(merged)
+    if wholeimage_predictions_by_specimen is not None:
+        cleaned = clean_merged_predictions(
+            apply_wholeimage_fallback(cleaned, wholeimage_predictions_by_specimen)
+        )
     rows = []
     for image_file in image_files:
         row = {"image_file": image_file}

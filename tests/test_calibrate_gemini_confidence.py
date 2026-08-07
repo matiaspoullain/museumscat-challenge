@@ -1,10 +1,14 @@
+import csv
+import os
 import tempfile
 
 import pandas as pd
 
 from src.calibrate_gemini_confidence import (
+    apply_wholeimage_fallback,
     fit_calibrators,
     load_calibrators,
+    load_wholeimage_predictions,
     merge_predictions_by_specimen,
     oof_calibrated_confidences,
     save_calibrators,
@@ -47,6 +51,58 @@ def test_merge_predictions_by_specimen_no_crops_is_missing():
     merged = merge_predictions_by_specimen({}, {}, ["a.jpeg"])
     assert merged["a.jpeg"]["verbatimDate"] == ("MISSING", 0.5)
     assert merged["a.jpeg"]["verbatimLocality"] == ("MISSING", 0.5)
+
+
+def test_apply_wholeimage_fallback_fills_missing_field():
+    merged = {"a.jpeg": {"verbatimDate": ("MISSING", 0.5), "verbatimLocality": ("MISSING", 0.5)}}
+    wholeimage_predictions = {
+        "a.jpeg": {"verbatimDate": ("22.5.1977", 0.8), "verbatimLocality": ("MISSING", 0.8)},
+    }
+    result = apply_wholeimage_fallback(merged, wholeimage_predictions)
+    assert result["a.jpeg"]["verbatimDate"] == ("22.5.1977", 0.8)
+    # fallback also said MISSING for locality -- stays MISSING
+    assert result["a.jpeg"]["verbatimLocality"] == ("MISSING", 0.5)
+
+
+def test_apply_wholeimage_fallback_never_overwrites_a_present_field():
+    merged = {"a.jpeg": {"verbatimDate": ("1.7.2000", 0.9), "verbatimLocality": ("MISSING", 0.5)}}
+    wholeimage_predictions = {
+        "a.jpeg": {"verbatimDate": ("2.7.2000", 0.8), "verbatimLocality": ("Kb", 0.8)},
+    }
+    result = apply_wholeimage_fallback(merged, wholeimage_predictions)
+    assert result["a.jpeg"]["verbatimDate"] == ("1.7.2000", 0.9)
+    assert result["a.jpeg"]["verbatimLocality"] == ("Kb", 0.8)
+
+
+def test_apply_wholeimage_fallback_specimen_with_no_fallback_entry_untouched():
+    merged = {"a.jpeg": {"verbatimDate": ("MISSING", 0.5), "verbatimLocality": ("MISSING", 0.5)}}
+    result = apply_wholeimage_fallback(merged, {})
+    assert result["a.jpeg"]["verbatimDate"] == ("MISSING", 0.5)
+    assert result["a.jpeg"]["verbatimLocality"] == ("MISSING", 0.5)
+
+
+def test_load_wholeimage_predictions_missing_file_returns_empty_dict():
+    assert load_wholeimage_predictions("/nonexistent/path.csv") == {}
+
+
+def test_load_wholeimage_predictions_reads_csv():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "wholeimage.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=[
+                "source_image_file", "verbatimDate", "verbatimDate_confidence",
+                "verbatimLocality", "verbatimLocality_confidence", "models_used", "raw_samples_json",
+            ])
+            writer.writeheader()
+            writer.writerow({
+                "source_image_file": "a.jpeg", "verbatimDate": "22.5.1977",
+                "verbatimDate_confidence": "0.8", "verbatimLocality": "MISSING",
+                "verbatimLocality_confidence": "0.8", "models_used": "gemini-3.5-flash-lite",
+                "raw_samples_json": "[]",
+            })
+        result = load_wholeimage_predictions(path)
+        assert result["a.jpeg"]["verbatimDate"] == ("22.5.1977", 0.8)
+        assert result["a.jpeg"]["verbatimLocality"] == ("MISSING", 0.8)
 
 
 def _synthetic_dev_set():

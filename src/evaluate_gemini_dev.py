@@ -17,7 +17,9 @@ import os
 import pandas as pd
 
 from src.calibrate_gemini_confidence import (
+    apply_wholeimage_fallback,
     load_predictions_by_crop,
+    load_wholeimage_predictions,
     merge_predictions_by_specimen,
     oof_calibrated_confidences,
 )
@@ -82,6 +84,16 @@ def main():
 
     calibrated_confidences = oof_calibrated_confidences(merged, ground_truth_df)
     _print_report("out-of-fold calibrated confidence", errors_by_field, calibrated_confidences)
+
+    wholeimage_predictions = load_wholeimage_predictions()
+    with_fallback = clean_merged_predictions(apply_wholeimage_fallback(cleaned, wholeimage_predictions))
+    fallback_errors_by_field = _errors_by_field(with_fallback, ground_truth_df)
+    fallback_confidences = {
+        field: [with_fallback[row["image_file"]][field][1] for _, row in ground_truth_df.iterrows()]
+        for field in FIELD_IS_DATE
+    }
+    _print_report("raw confidence + cleanup + whole-image fallback",
+                  fallback_errors_by_field, fallback_confidences)
 
 
 if __name__ == "__main__":

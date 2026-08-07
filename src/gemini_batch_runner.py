@@ -12,11 +12,19 @@ import os
 
 from google.genai import errors as genai_errors
 
-from src.gemini_transcribe import RateLimiter, build_client, call_gemini_once, transcribe_card_with_confidence
+from src.gemini_transcribe import (
+    PROMPT,
+    RateLimiter,
+    WHOLE_IMAGE_PROMPT,
+    build_client,
+    call_gemini_once,
+    transcribe_card_with_confidence,
+)
 from src.pipeline import load_manifest
 
 MANIFEST_PATH = os.path.join("data", "processed", "card_crops", "manifest.csv")
 CROPS_IMAGES_DIR = os.path.join("data", "processed", "card_crops", "images")
+WHOLEIMAGE_IMAGES_DIR = os.path.join("data", "raw", "images")
 
 OUTPUT_COLUMNS = [
     "crop_filename",
@@ -28,6 +36,18 @@ OUTPUT_COLUMNS = [
     "models_used",
     "raw_samples_json",
 ]
+
+OUTPUT_COLUMNS_WHOLEIMAGE = [
+    "source_image_file",
+    "verbatimDate",
+    "verbatimDate_confidence",
+    "verbatimLocality",
+    "verbatimLocality_confidence",
+    "models_used",
+    "raw_samples_json",
+]
+
+FIELDS = ("verbatimDate", "verbatimLocality")
 
 
 def pending_crops(image_files, relevance_flags, manifest_path=MANIFEST_PATH):
@@ -43,11 +63,27 @@ def pending_crops(image_files, relevance_flags, manifest_path=MANIFEST_PATH):
     return crops
 
 
-def already_done(output_path):
+def already_done(output_path, key_column="crop_filename"):
     if not os.path.exists(output_path):
         return set()
     with open(output_path, encoding="utf-8") as f:
-        return {row["crop_filename"] for row in csv.DictReader(f)}
+        return {row[key_column] for row in csv.DictReader(f)}
+
+
+def wholeimage_pending(image_files, merged_predictions):
+    """image_files whose merged per-card prediction (src.calibrate_gemini_confidence.
+    merge_predictions_by_specimen's output shape) has both fields "MISSING" --
+    the per-card path found nothing for these, so a whole-image fallback call
+    is worth the extra quota. A specimen absent from merged_predictions is
+    skipped (nothing to compare against)."""
+    pending = []
+    for image_file in image_files:
+        fields = merged_predictions.get(image_file)
+        if fields is None:
+            continue
+        if all(fields[field][0] == "MISSING" for field in FIELDS):
+            pending.append(image_file)
+    return pending
 
 
 def is_quota_exhausted(error):
@@ -81,7 +117,7 @@ class ModelRotation:
         return True
 
 
-def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter):
+def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, prompt=PROMPT):
     """Same return shape as call_gemini_once, plus "_model" recording which
     model in the rotation actually produced this sample -- self_consistency_scores
     only reads the field keys it knows about, so this rides along harmlessly
@@ -89,7 +125,8 @@ def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter):
     while True:
         model = model_rotation.current
         try:
-            result = call_gemini_once(client, image_bytes, model=model, rate_limiter=rate_limiter)
+            result = call_gemini_once(client, image_bytes, model=model, rate_limiter=rate_limiter,
+                                       prompt=prompt)
             return {**result, "_model": model}
         except genai_errors.ClientError as e:
             if is_quota_exhausted(e) and model_rotation.advance():
@@ -156,6 +193,76 @@ def run_batch(image_files, relevance_flags, output_path, n_samples, rpm, limit, 
             writer.writerow(row)
             f.flush()
             print(f"[{i}/{len(pending)}] {crop_filename}: "
+                  f"date={row['verbatimDate']!r} ({row['verbatimDate_confidence']:.2f}) "
+                  f"locality={row['verbatimLocality']!r} ({row['verbatimLocality_confidence']:.2f}) "
+                  f"models={row['models_used']}",
+                  flush=True)
+
+    print(f"[done] wrote {len(pending)} new rows to {output_path}", flush=True)
+
+
+def run_wholeimage_batch(image_files, merged_predictions, output_path, n_samples, rpm, limit, api_key,
+                          models, images_dir=WHOLEIMAGE_IMAGES_DIR):
+    """Whole-image fallback for specimens the per-card pass left both-fields
+    MISSING -- same resumable shape as run_batch (skip-on-resume via
+    already_done, flush-per-row, model rotation), but reads the original
+    uncropped photo and uses WHOLE_IMAGE_PROMPT instead of a card crop."""
+    if isinstance(models, str):
+        models = [models]
+    model_rotation = ModelRotation(models)
+
+    print(f"[setup] {len(image_files)} specimens given", flush=True)
+    all_pending = wholeimage_pending(image_files, merged_predictions)
+    print(f"[setup] {len(all_pending)} specimens still both-MISSING after the per-card pass", flush=True)
+
+    done = already_done(output_path, key_column="source_image_file")
+    pending = [image_file for image_file in all_pending if image_file not in done]
+    print(f"[setup] {len(done)} specimens already transcribed in {output_path} (resuming, will skip)",
+          flush=True)
+    if limit is not None:
+        pending = pending[:limit]
+        print(f"[setup] --limit {limit} applied: processing {len(pending)} specimens this run", flush=True)
+    if not pending:
+        print("[done] nothing to do (all both-MISSING specimens already transcribed)", flush=True)
+        return
+
+    print(f"[setup] building Gemini client (models={model_rotation.models}, "
+          f"n_samples={n_samples}, rpm={rpm})...", flush=True)
+    client = build_client(api_key)
+    rate_limiter = RateLimiter(max_calls_per_minute=rpm)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    write_header = not os.path.exists(output_path)
+    print(f"[run] starting: {len(pending)} specimens to transcribe (whole image)", flush=True)
+    with open(output_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS_WHOLEIMAGE)
+        if write_header:
+            writer.writeheader()
+
+        for i, source_image_file in enumerate(pending, start=1):
+            print(f"[{i}/{len(pending)}] {source_image_file}: requesting {n_samples} sample(s) "
+                  f"from {model_rotation.current}...", flush=True)
+            with open(os.path.join(images_dir, source_image_file), "rb") as img_f:
+                image_bytes = img_f.read()
+
+            def call_fn(image_bytes=image_bytes):
+                return _call_with_fallback(client, image_bytes, model_rotation, rate_limiter,
+                                            prompt=WHOLE_IMAGE_PROMPT)
+
+            scores, samples = transcribe_card_with_confidence(n_samples=n_samples, call_fn=call_fn)
+            models_used = sorted({sample.get("_model", "") for sample in samples} - {""})
+            row = {
+                "source_image_file": source_image_file,
+                "verbatimDate": scores["verbatimDate"][0],
+                "verbatimDate_confidence": scores["verbatimDate"][1],
+                "verbatimLocality": scores["verbatimLocality"][0],
+                "verbatimLocality_confidence": scores["verbatimLocality"][1],
+                "models_used": ",".join(models_used),
+                "raw_samples_json": json.dumps(samples),
+            }
+            writer.writerow(row)
+            f.flush()
+            print(f"[{i}/{len(pending)}] {source_image_file}: "
                   f"date={row['verbatimDate']!r} ({row['verbatimDate_confidence']:.2f}) "
                   f"locality={row['verbatimLocality']!r} ({row['verbatimLocality_confidence']:.2f}) "
                   f"models={row['models_used']}",

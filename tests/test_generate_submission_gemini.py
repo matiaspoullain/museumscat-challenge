@@ -35,3 +35,13 @@ def test_build_submission_df_defaults_absent_specimen_to_missing():
     row = df.set_index("image_file").loc["a.jpeg"]
     assert row["verbatimDate"] == "MISSING"
     assert row["verbatimLocality"] == "MISSING"
+
+
+def test_build_submission_df_applies_wholeimage_fallback_and_cleans_it():
+    wholeimage_predictions_by_specimen = {
+        "a.jpeg": {"verbatimDate": ("22.5.1977", 0.8), "verbatimLocality": ("Bötö.", 0.8)},
+    }
+    df = build_submission_df(["a.jpeg"], {}, {}, wholeimage_predictions_by_specimen)
+    row = df.set_index("image_file").loc["a.jpeg"]
+    assert row["verbatimDate"] == "22.5.1977"
+    assert row["verbatimLocality"] == "Bøtø"  # fallback value also gets ö->ø + trailing-period cleanup

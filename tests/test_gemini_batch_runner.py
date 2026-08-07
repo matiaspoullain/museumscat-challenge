@@ -1,7 +1,11 @@
+import csv
+import os
+import tempfile
+
 import pytest
 from google.genai import errors as genai_errors
 
-from src.gemini_batch_runner import ModelRotation, is_quota_exhausted
+from src.gemini_batch_runner import ModelRotation, already_done, is_quota_exhausted, wholeimage_pending
 
 
 def _client_error(code):
@@ -44,3 +48,35 @@ def test_is_quota_exhausted_false_for_other_codes():
 
 def test_is_quota_exhausted_false_for_other_exception_types():
     assert is_quota_exhausted(ValueError("not an api error")) is False
+
+
+def test_wholeimage_pending_includes_both_missing_specimens():
+    merged_predictions = {
+        "a.jpeg": {"verbatimDate": ("MISSING", 0.5), "verbatimLocality": ("MISSING", 0.5)},
+    }
+    assert wholeimage_pending(["a.jpeg"], merged_predictions) == ["a.jpeg"]
+
+
+def test_wholeimage_pending_excludes_specimen_with_one_field_present():
+    merged_predictions = {
+        "a.jpeg": {"verbatimDate": ("22.5.1977", 0.9), "verbatimLocality": ("MISSING", 0.5)},
+    }
+    assert wholeimage_pending(["a.jpeg"], merged_predictions) == []
+
+
+def test_wholeimage_pending_excludes_specimen_absent_from_merged_predictions():
+    assert wholeimage_pending(["a.jpeg"], {}) == []
+
+
+def test_already_done_reads_custom_key_column():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "wholeimage.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["source_image_file", "verbatimDate"])
+            writer.writeheader()
+            writer.writerow({"source_image_file": "a.jpeg", "verbatimDate": "MISSING"})
+        assert already_done(path, key_column="source_image_file") == {"a.jpeg"}
+
+
+def test_already_done_missing_file_returns_empty_set():
+    assert already_done("/nonexistent/path.csv", key_column="source_image_file") == set()

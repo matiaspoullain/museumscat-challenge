@@ -28,11 +28,14 @@ from src.metrics import best_pipe_ned
 from src.pipeline import load_manifest
 
 DEV_PREDICTIONS_PATH = os.path.join("data", "processed", "gemini", "dev_card_predictions.csv")
+DEV_WHOLEIMAGE_PREDICTIONS_PATH = os.path.join("data", "processed", "gemini",
+                                                "dev_wholeimage_predictions.csv")
 TRAIN_CSV_PATH = os.path.join("data", "raw", "train.csv")
 MANIFEST_PATH = os.path.join("data", "processed", "card_crops", "manifest.csv")
 MODELS_DIR = "models"
 
 FIELD_IS_DATE = {"verbatimDate": True, "verbatimLocality": False}
+FIELDS = tuple(FIELD_IS_DATE)
 
 
 def load_predictions_by_crop(path=DEV_PREDICTIONS_PATH):
@@ -70,6 +73,44 @@ def merge_predictions_by_specimen(predictions_by_crop, manifest_by_image, image_
                     per_field_cards[field].append((text, confidence))
         merged[image_file] = {field: assemble_field(cards) for field, cards in per_field_cards.items()}
     return merged
+
+
+def load_wholeimage_predictions(path=DEV_WHOLEIMAGE_PREDICTIONS_PATH):
+    """source_image_file -> {field: (text, confidence)}, one row per specimen
+    (no crop-level nesting, unlike load_predictions_by_crop -- a whole-image
+    call already covers the whole specimen). Missing file (fallback pass not
+    yet run) returns an empty dict rather than raising, so callers can treat
+    "not run yet" the same as "no fallback available"."""
+    if not os.path.exists(path):
+        return {}
+    by_specimen = {}
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            by_specimen[row["source_image_file"]] = {
+                "verbatimDate": (row["verbatimDate"], float(row["verbatimDate_confidence"])),
+                "verbatimLocality": (row["verbatimLocality"], float(row["verbatimLocality_confidence"])),
+            }
+    return by_specimen
+
+
+def apply_wholeimage_fallback(merged, wholeimage_predictions):
+    """Overlays whole-image fallback predictions onto a per-card merge,
+    field by field: fills in a field only where the per-card side is
+    "MISSING" and the fallback found a real value, never overwriting a
+    per-card value that was already present. A specimen only gets a
+    whole-image call when *both* fields were MISSING, but the whole-image
+    response itself may find only one of the two -- no reason to discard the
+    field it did find."""
+    result = {}
+    for image_file, fields in merged.items():
+        fallback = wholeimage_predictions.get(image_file)
+        updated = dict(fields)
+        if fallback is not None:
+            for field in FIELDS:
+                if updated[field][0] == "MISSING" and fallback[field][0] != "MISSING":
+                    updated[field] = fallback[field]
+        result[image_file] = updated
+    return result
 
 
 def _confidences_and_correctness(merged, ground_truth_df):

@@ -59,6 +59,43 @@ this card -- if that's all this card has, both fields are "MISSING":
 
 Respond with ONLY a JSON object: {"verbatimDate": "...", "verbatimLocality": "..."}"""
 
+# Used as a fallback for specimens where the per-card path found nothing at
+# all (failed card detection, an over-eager confound filter, or a crop the
+# model itself couldn't read) -- src.gemini_batch_runner.run_wholeimage_batch.
+# Shares PROMPT's confound-exclusion rules verbatim (kept in sync by
+# tests/test_gemini_transcribe.py), but this is the full photo, which may
+# show more than one pinned specimen card.
+WHOLE_IMAGE_PROMPT = """You are transcribing a photo of a pinned Danish Dung \
+Beetle specimen (1800s-present handwriting and print, sometimes faded or \
+historical spelling). This is the FULL photo, not a single card -- it may \
+show one label, several separate labels on the same pin, or stray tags. \
+Transcribe verbatimDate and verbatimLocality from ALL cards/labels visible.
+
+verbatimDate: the collection date(s), transcribed exactly as written \
+(digits, roman numerals, and separators as they appear -- do not reformat or \
+normalize punctuation). If no card has a date, use "MISSING".
+
+verbatimLocality: the collection locality/localities (place name), \
+transcribed exactly as written, preserving original spelling and \
+abbreviations. If no card has a locality, use "MISSING".
+
+If MULTIPLE cards each carry their own date or locality, join those values \
+with " | " in reading order, e.g. "Ti | Kulhuset Jægerspris" -- do not merge \
+them into one string or pick only one card.
+
+Do NOT transcribe the following as either field, even if it's the only text \
+visible -- if that's all there is, both fields are "MISSING":
+- Collector names, often prefixed "Coll." (e.g. "Coll. J. P. Johansen")
+- Species determination info, often prefixed "det." or "Tilg."
+- "Dania" -- this is the name of the specimen collection itself, not a locality
+- Collection substrate notes like "i kogøding" ("in cow dung") -- not a locality
+- Museum/institution boilerplate (e.g. "Statens Naturhistoriske Museum", \
+"Københavns Universitet", "DaSSCo", "NHMD"), including stamps or labels that \
+repeat this on multiple cards in the same photo
+- Catalog numbers, page numbers, or bare initials with no place/date meaning
+
+Respond with ONLY a JSON object: {"verbatimDate": "...", "verbatimLocality": "..."}"""
+
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -112,13 +149,13 @@ def _parse_response_json(text):
 
 
 def call_gemini_once(client, image_bytes, mime_type="image/jpeg", model=DEFAULT_MODEL,
-                      temperature=0.7, rate_limiter=None):
+                      temperature=0.7, rate_limiter=None, prompt=PROMPT):
     if rate_limiter is not None:
         rate_limiter.wait()
     response = client.models.generate_content(
         model=model,
         contents=[
-            PROMPT,
+            prompt,
             {"inline_data": {"data": image_bytes, "mimeType": mime_type}},
         ],
         config=types.GenerateContentConfig(

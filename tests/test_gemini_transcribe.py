@@ -1,12 +1,61 @@
 import time
 
 from src.gemini_transcribe import (
+    PROMPT,
+    WHOLE_IMAGE_PROMPT,
     RateLimiter,
     _normalize_for_matching,
     _parse_response_json,
+    call_gemini_once,
     self_consistency_scores,
     transcribe_card_with_confidence,
 )
+
+
+class _FakeResponse:
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeModels:
+    def __init__(self):
+        self.calls = []
+
+    def generate_content(self, model, contents, config):
+        self.calls.append({"model": model, "contents": contents, "config": config})
+        return _FakeResponse('{"verbatimDate": "MISSING", "verbatimLocality": "MISSING"}')
+
+
+class _FakeClient:
+    def __init__(self):
+        self.models = _FakeModels()
+
+
+def test_call_gemini_once_defaults_to_card_prompt():
+    client = _FakeClient()
+    call_gemini_once(client, b"fake-bytes")
+    assert client.models.calls[0]["contents"][0] == PROMPT
+
+
+def test_call_gemini_once_forwards_custom_prompt():
+    client = _FakeClient()
+    call_gemini_once(client, b"fake-bytes", prompt=WHOLE_IMAGE_PROMPT)
+    assert client.models.calls[0]["contents"][0] == WHOLE_IMAGE_PROMPT
+
+
+# Confound-exclusion rules that WHOLE_IMAGE_PROMPT must keep in sync with
+# PROMPT -- a divergence here would mean the whole-image fallback stops
+# excluding a category the per-card prompt already knows to drop.
+_CONFOUND_RULE_SUBSTRINGS = [
+    "Coll.", "det.", "Tilg.", "Dania", "i kogøding",
+    "Statens Naturhistoriske Museum", "Københavns Universitet", "DaSSCo", "NHMD",
+]
+
+
+def test_whole_image_prompt_keeps_confound_rules_in_sync_with_card_prompt():
+    for substring in _CONFOUND_RULE_SUBSTRINGS:
+        assert substring in PROMPT, f"{substring!r} missing from PROMPT itself"
+        assert substring in WHOLE_IMAGE_PROMPT, f"{substring!r} missing from WHOLE_IMAGE_PROMPT"
 
 
 def test_parse_response_json_plain():
