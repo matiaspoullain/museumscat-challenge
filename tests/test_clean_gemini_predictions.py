@@ -29,6 +29,22 @@ def test_clean_locality_does_not_strip_internal_periods():
     assert clean_locality("SKIBBY, S.J.") == "SKIBBY, S.J"
 
 
+def test_clean_locality_strips_trailing_loev_segment():
+    assert clean_locality("Tj | Løv.") == "Tj"
+
+
+def test_clean_locality_strips_trailing_mus_loev_segment():
+    assert clean_locality("Al | Mus. Løv.") == "Al"
+
+
+def test_clean_locality_strips_trailing_loev_segment_case_insensitive():
+    assert clean_locality("Kb | mus. lov") == "Kb"
+
+
+def test_clean_locality_leaves_other_pipe_joined_localities_untouched():
+    assert clean_locality("Grenaa | Brastrup") == "Grenaa | Brastrup"
+
+
 def test_clean_merged_predictions_only_touches_locality():
     merged = {
         "a.jpeg": {"verbatimDate": ("22.5.1977.", 0.9), "verbatimLocality": ("Bötö.", 0.8)},

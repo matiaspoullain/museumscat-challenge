@@ -52,7 +52,8 @@ this card -- if that's all this card has, both fields are "MISSING":
 - Collector names, often prefixed "Coll." (e.g. "Coll. J. P. Johansen")
 - Species determination info, often prefixed "det." or "Tilg."
 - "Dania" -- this is the name of the specimen collection itself, not a locality
-- Collection substrate notes like "i kogøding" ("in cow dung") -- not a locality
+- Collection substrate/habitat notes like "i kogøding" ("in cow dung") or \
+"Løv."/"Mus. Løv." ("i løv", i.e. "in leaf litter") -- not a locality
 - Museum/institution boilerplate (e.g. "Statens Naturhistoriske Museum", \
 "Københavns Universitet", "DaSSCo", "NHMD")
 - Catalog numbers, page numbers, or bare initials with no place/date meaning
@@ -88,7 +89,9 @@ visible -- if that's all there is, both fields are "MISSING":
 - Collector names, often prefixed "Coll." (e.g. "Coll. J. P. Johansen")
 - Species determination info, often prefixed "det." or "Tilg."
 - "Dania" -- this is the name of the specimen collection itself, not a locality
-- Collection substrate notes like "i kogøding" ("in cow dung") -- not a locality
+- Collection substrate/habitat notes like "i kogøding" ("in cow dung") or \
+"Løv."/"Mus. Løv." ("i løv", i.e. "in leaf litter") -- not a locality, even \
+when it looks like a second pipe-joined value
 - Museum/institution boilerplate (e.g. "Statens Naturhistoriske Museum", \
 "Københavns Universitet", "DaSSCo", "NHMD"), including stamps or labels that \
 repeat this on multiple cards in the same photo

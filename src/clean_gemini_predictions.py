@@ -4,6 +4,14 @@ run: "o" is not a Danish letter but Gemini occasionally emits it for ø, and a
 trailing period on a locality (unlike a date's punctuation) isn't normalized
 by the scorer and so counts as a real edit-distance error.
 
+The whole-image fallback (src.gemini_batch_runner.run_wholeimage_batch) also
+recurringly pipe-joins a "Løv."/"Mus. Løv." habitat note (Danish "i løv" --
+"in leaf litter") as if it were a second card's locality, self-consistently
+across all samples (so raw confidence doesn't flag it) and always wrong
+against ground truth -- mined from data/processed/gemini/dev_wholeimage_predictions.csv.
+WHOLE_IMAGE_PROMPT now excludes it explicitly, but this rule stays as a
+defensive net for whatever already ran, or slips through the prompt.
+
 verbatimDate is left untouched -- src.metrics.normalize_date_punctuation
 already makes date punctuation variants free at scoring time, so nothing here
 would change its AURC.
@@ -23,11 +31,16 @@ _OE_UMLAUT_TO_OSLASH = str.maketrans("öÖ", "øØ")
 
 _TRAILING_PUNCTUATION = re.compile(r"[.,]+\s*$")
 
+# A pipe-joined "Løv."/"Mus. Løv." segment is a habitat note ("i løv" -- "in
+# leaf litter"), not a second card's locality -- strip it off the end.
+_TRAILING_LOEV_SEGMENT = re.compile(r"\s*\|\s*(Mus\.\s*)?L[øo]v\.?\s*$", re.IGNORECASE)
+
 
 def clean_locality(text):
     if text == "MISSING":
         return text
     text = text.translate(_OE_UMLAUT_TO_OSLASH)
+    text = _TRAILING_LOEV_SEGMENT.sub("", text)
     text = _TRAILING_PUNCTUATION.sub("", text).strip()
     return text or "MISSING"
 

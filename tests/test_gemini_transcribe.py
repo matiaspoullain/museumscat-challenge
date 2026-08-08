@@ -47,7 +47,7 @@ def test_call_gemini_once_forwards_custom_prompt():
 # PROMPT -- a divergence here would mean the whole-image fallback stops
 # excluding a category the per-card prompt already knows to drop.
 _CONFOUND_RULE_SUBSTRINGS = [
-    "Coll.", "det.", "Tilg.", "Dania", "i kogøding",
+    "Coll.", "det.", "Tilg.", "Dania", "i kogøding", "Løv.",
     "Statens Naturhistoriske Museum", "Københavns Universitet", "DaSSCo", "NHMD",
 ]
 
