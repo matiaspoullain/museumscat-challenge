@@ -117,13 +117,15 @@ def evaluate_config(config, context):
             with_fallback, ground_truth_df, family=config["calibrator_family"]
         )
     else:
+        rows_by_field = build_feature_rows(
+            image_files, with_fallback, context["contributing_crops"], predictions_by_crop_variant,
+            images_dir=context["images_dir"],
+        )
         for field in FIELD_IS_DATE:
-            rows = build_feature_rows(
-                image_files, with_fallback, context["contributing_crops"], predictions_by_crop_variant,
-                images_dir=context["images_dir"],
-            )[field]
             correctness = [1.0 - e for e in errors_by_field[field]]
-            confidences_by_field[field] = oof_multi_feature_calibrated_confidences(rows, correctness)
+            confidences_by_field[field] = oof_multi_feature_calibrated_confidences(
+                rows_by_field[field], correctness
+            )
 
     if config["penalty"]:
         for field in FIELD_IS_DATE:
