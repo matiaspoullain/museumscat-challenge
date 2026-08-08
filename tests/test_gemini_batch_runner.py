@@ -5,11 +5,35 @@ import tempfile
 import pytest
 from google.genai import errors as genai_errors
 
-from src.gemini_batch_runner import ModelRotation, already_done, is_quota_exhausted, wholeimage_pending
+from src.gemini_batch_runner import (
+    MAX_SAFE_RPM,
+    ModelRotation,
+    _call_with_fallback,
+    _validate_rpm,
+    already_done,
+    is_daily_quota_exhausted,
+    is_quota_exhausted,
+    wholeimage_pending,
+)
 
 
 def _client_error(code):
     return genai_errors.ClientError(code, {"error": {"message": "boom"}}, response=None)
+
+
+def _quota_client_error(quota_id=None, message="boom"):
+    """A 429 shaped like a real Gemini free-tier response: a structured
+    google.rpc.QuotaFailure detail carrying the quotaId that distinguishes a
+    per-day limit (e.g. "GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    from a per-minute/RPM one ("GenerateRequestsPerMinutePerProjectPerModel-FreeTier")."""
+    details = []
+    if quota_id is not None:
+        details.append({
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            "violations": [{"quotaId": quota_id}],
+        })
+    return genai_errors.ClientError(
+        429, {"error": {"message": message, "details": details}}, response=None)
 
 
 def test_model_rotation_starts_at_first_model():
@@ -80,3 +104,110 @@ def test_already_done_reads_custom_key_column():
 
 def test_already_done_missing_file_returns_empty_set():
     assert already_done("/nonexistent/path.csv", key_column="source_image_file") == set()
+
+
+def test_is_daily_quota_exhausted_true_for_per_day_quota_id():
+    error = _quota_client_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    assert is_daily_quota_exhausted(error) is True
+
+
+def test_is_daily_quota_exhausted_false_for_per_minute_quota_id():
+    error = _quota_client_error("GenerateRequestsPerMinutePerProjectPerModel-FreeTier")
+    assert is_daily_quota_exhausted(error) is False
+
+
+def test_is_daily_quota_exhausted_false_for_non_429():
+    assert is_daily_quota_exhausted(_client_error(404)) is False
+
+
+def test_is_daily_quota_exhausted_false_for_other_exception_types():
+    assert is_daily_quota_exhausted(ValueError("not an api error")) is False
+
+
+def test_is_daily_quota_exhausted_falls_back_to_message_text_for_daily():
+    error = _quota_client_error(quota_id=None, message="You exceeded your per day quota")
+    assert is_daily_quota_exhausted(error) is True
+
+
+def test_is_daily_quota_exhausted_falls_back_to_message_text_for_minute():
+    error = _quota_client_error(quota_id=None, message="You exceeded your per minute quota")
+    assert is_daily_quota_exhausted(error) is False
+
+
+def test_is_daily_quota_exhausted_defaults_false_when_ambiguous():
+    error = _quota_client_error(quota_id=None, message="quota exceeded")
+    assert is_daily_quota_exhausted(error) is False
+
+
+def test_validate_rpm_accepts_max_safe_rpm():
+    _validate_rpm(MAX_SAFE_RPM)
+
+
+def test_validate_rpm_rejects_above_max_safe_rpm():
+    with pytest.raises(ValueError):
+        _validate_rpm(MAX_SAFE_RPM + 1)
+
+
+class _FlakyModels:
+    """Fake google.genai client.models that raises a scripted sequence of
+    errors/responses in order, recording which model each call used."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = []
+
+    def generate_content(self, model, contents, config):
+        self.calls.append(model)
+        outcome = self.script.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+
+        class _Response:
+            text = outcome
+
+        return _Response()
+
+
+class _FlakyClient:
+    def __init__(self, script):
+        self.models = _FlakyModels(script)
+
+
+_SUCCESS_TEXT = '{"verbatimDate": "MISSING", "verbatimLocality": "MISSING"}'
+
+
+def test_call_with_fallback_retries_same_model_on_per_minute_429(monkeypatch):
+    slept = []
+    monkeypatch.setattr("src.gemini_batch_runner.time.sleep", lambda seconds: slept.append(seconds))
+
+    per_minute_error = _quota_client_error("GenerateRequestsPerMinutePerProjectPerModel-FreeTier")
+    client = _FlakyClient([per_minute_error, _SUCCESS_TEXT])
+    rotation = ModelRotation(["a", "b"])
+
+    result = _call_with_fallback(client, b"fake-bytes", rotation, rate_limiter=None)
+
+    assert result["_model"] == "a"
+    assert client.models.calls == ["a", "a"]
+    assert rotation.current == "a"
+    assert slept == [60]
+
+
+def test_call_with_fallback_advances_model_on_daily_429():
+    daily_error = _quota_client_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    client = _FlakyClient([daily_error, _SUCCESS_TEXT])
+    rotation = ModelRotation(["a", "b"])
+
+    result = _call_with_fallback(client, b"fake-bytes", rotation, rate_limiter=None)
+
+    assert result["_model"] == "b"
+    assert client.models.calls == ["a", "b"]
+    assert rotation.current == "b"
+
+
+def test_call_with_fallback_reraises_non_quota_errors():
+    other_error = _client_error(404)
+    client = _FlakyClient([other_error])
+    rotation = ModelRotation(["a", "b"])
+
+    with pytest.raises(genai_errors.ClientError):
+        _call_with_fallback(client, b"fake-bytes", rotation, rate_limiter=None)

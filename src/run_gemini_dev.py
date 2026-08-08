@@ -40,7 +40,9 @@ def main():
     parser.add_argument("--n-samples", type=int, default=3,
                          help="self-consistency samples per card (default 3)")
     parser.add_argument("--rpm", type=int, default=10,
-                         help="max Gemini calls per minute (default 10, conservative for free tier)")
+                         help="max Gemini calls per minute (default 10, conservative for free tier; "
+                              "hard-capped at src.gemini_transcribe.MAX_SAFE_RPM=14, since the "
+                              "free-tier quota is 15/min per model)")
     parser.add_argument("--limit", type=int, default=None,
                          help="only process this many pending crops (for smoke testing)")
     parser.add_argument("--api-key", default=os.environ.get("GEMINI_API_KEY"),

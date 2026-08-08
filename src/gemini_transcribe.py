@@ -26,11 +26,16 @@ from src.metrics import ned
 
 # "gemini-2.5-flash" (this project's original choice) returns 404 for new API
 # keys, and "gemini-flash-latest" resolved to "gemini-3.6-flash", whose free
-# tier is only 20 requests/day -- unusably small. The "-lite" variants have
-# much larger free-tier daily quotas; src.gemini_batch_runner.ModelRotation
-# tries these in order (most capable first) and falls forward to the next one
-# once the current model's daily quota is exhausted (HTTP 429).
-MODEL_FALLBACK_ORDER = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
+# tier is only 20 requests/day -- unusably small. "gemini-2.5-flash-lite" was
+# a third fallback here too, but also 404s for new API keys ("no longer
+# available to new users", confirmed 2026-08-08) -- kept in the rotation it
+# would silently turn a graceful quota-exhausted stop into a confusing crash
+# once the two models below are both exhausted, so it's removed rather than
+# kept as a broken placeholder. The "-lite" variants have much larger
+# free-tier daily quotas; src.gemini_batch_runner.ModelRotation tries these in
+# order (most capable first) and falls forward to the next one once the
+# current model's daily quota is exhausted (HTTP 429).
+MODEL_FALLBACK_ORDER = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
 DEFAULT_MODEL = MODEL_FALLBACK_ORDER[0]
 FIELDS = ("verbatimDate", "verbatimLocality")
 
@@ -49,6 +54,9 @@ verbatimLocality: the collection locality (place name) on this card, transcribed
 exactly as written, preserving original spelling and abbreviations. If this card \
 has no locality, use "MISSING".
 
+Danish special letters are æ, ø, and å -- NOT ö, ä, or ü. If a handwritten or \
+printed letter looks like it could be ø, transcribe it as ø, never as ö.
+
 Do NOT transcribe the following as either field, even if it's the only text on \
 this card -- if that's all this card has, both fields are "MISSING":
 - Collector names, often prefixed "Coll." (e.g. "Coll. J. P. Johansen")
@@ -58,7 +66,18 @@ this card -- if that's all this card has, both fields are "MISSING":
 "Løv."/"Mus. Løv." ("i løv", i.e. "in leaf litter") -- not a locality
 - Museum/institution boilerplate (e.g. "Statens Naturhistoriske Museum", \
 "Københavns Universitet", "DaSSCo", "NHMD")
-- Catalog numbers, page numbers, or bare initials with no place/date meaning
+- Catalog numbers, page numbers, or a collector's monogram (only when it's \
+clearly a person's initials, e.g. accompanying or styled like a "Coll." \
+attribution) -- not a locality
+- Do NOT treat every short 1-3 letter label as a bare initial: Danish locality \
+labels are routinely abbreviated to just 1-3 letters on their own small card \
+(e.g. "Kb" for København). A short capitalized label on its own card, with no \
+"Coll." attribution nearby, is a place abbreviation and belongs in \
+verbatimLocality exactly as written -- even if you don't recognize the \
+specific abbreviation (e.g. "Ti", "Al"). This does NOT apply to "Løv."/"Mus. \
+Løv." or "i kogøding" above -- those are excluded regardless of how short or \
+standalone they look, even though they're written in the same short-label \
+style as a real place abbreviation
 
 Respond with ONLY a JSON object: {"verbatimDate": "...", "verbatimLocality": "..."}"""
 
@@ -82,6 +101,9 @@ verbatimLocality: the collection locality/localities (place name), \
 transcribed exactly as written, preserving original spelling and \
 abbreviations. If no card has a locality, use "MISSING".
 
+Danish special letters are æ, ø, and å -- NOT ö, ä, or ü. If a handwritten or \
+printed letter looks like it could be ø, transcribe it as ø, never as ö.
+
 If MULTIPLE cards each carry their own date or locality, join those values \
 with " | " in reading order, e.g. "Ti | Kulhuset Jægerspris" -- do not merge \
 them into one string or pick only one card.
@@ -97,7 +119,18 @@ when it looks like a second pipe-joined value
 - Museum/institution boilerplate (e.g. "Statens Naturhistoriske Museum", \
 "Københavns Universitet", "DaSSCo", "NHMD"), including stamps or labels that \
 repeat this on multiple cards in the same photo
-- Catalog numbers, page numbers, or bare initials with no place/date meaning
+- Catalog numbers, page numbers, or a collector's monogram (only when it's \
+clearly a person's initials, e.g. accompanying or styled like a "Coll." \
+attribution) -- not a locality
+- Do NOT treat every short 1-3 letter label as a bare initial: Danish locality \
+labels are routinely abbreviated to just 1-3 letters on their own small card \
+(e.g. "Kb" for København). A short capitalized label on its own card, with no \
+"Coll." attribution nearby, is a place abbreviation and belongs in \
+verbatimLocality exactly as written -- even if you don't recognize the \
+specific abbreviation (e.g. "Ti", "Al"). This does NOT apply to "Løv."/"Mus. \
+Løv." or "i kogøding" above -- those are excluded regardless of how short or \
+standalone they look, even though they're written in the same short-label \
+style as a real place abbreviation
 
 Respond with ONLY a JSON object: {"verbatimDate": "...", "verbatimLocality": "..."}"""
 
@@ -109,6 +142,13 @@ RESPONSE_SCHEMA = {
     },
     "required": list(FIELDS),
 }
+
+
+# Free-tier RPM quota is 15 requests/minute for both MODEL_FALLBACK_ORDER
+# models. Cap configured rpm below that (not equal to it) so clock skew
+# between our local minute-window and the API's doesn't tip us over --
+# src.gemini_batch_runner.run_batch/run_wholeimage_batch enforce this.
+MAX_SAFE_RPM = 14
 
 
 class RateLimiter:
@@ -160,10 +200,10 @@ def call_gemini_once(client, image_bytes, mime_type="image/jpeg", model=DEFAULT_
     response = client.models.generate_content(
         model=model,
         contents=[
-            prompt,
             {"inline_data": {"data": image_bytes, "mimeType": mime_type}},
         ],
         config=types.GenerateContentConfig(
+            system_instruction=prompt,
             temperature=temperature,
             response_mime_type="application/json",
             response_json_schema=RESPONSE_SCHEMA,

@@ -37,13 +37,13 @@ class _FakeClient:
 def test_call_gemini_once_defaults_to_card_prompt():
     client = _FakeClient()
     call_gemini_once(client, b"fake-bytes")
-    assert client.models.calls[0]["contents"][0] == PROMPT
+    assert client.models.calls[0]["config"].system_instruction == PROMPT
 
 
 def test_call_gemini_once_forwards_custom_prompt():
     client = _FakeClient()
     call_gemini_once(client, b"fake-bytes", prompt=WHOLE_IMAGE_PROMPT)
-    assert client.models.calls[0]["contents"][0] == WHOLE_IMAGE_PROMPT
+    assert client.models.calls[0]["config"].system_instruction == WHOLE_IMAGE_PROMPT
 
 
 # Confound-exclusion rules that WHOLE_IMAGE_PROMPT must keep in sync with

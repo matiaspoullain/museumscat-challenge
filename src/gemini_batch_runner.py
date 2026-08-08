@@ -9,10 +9,12 @@ picks up where it left off on the next invocation.
 import csv
 import json
 import os
+import time
 
 from google.genai import errors as genai_errors
 
 from src.gemini_transcribe import (
+    MAX_SAFE_RPM,
     PROMPT,
     RateLimiter,
     WHOLE_IMAGE_PROMPT,
@@ -21,6 +23,12 @@ from src.gemini_transcribe import (
     transcribe_card_with_confidence,
 )
 from src.pipeline import load_manifest
+
+# How long to back off before retrying the same model after a per-minute
+# (RPM) 429 -- long enough for the 60s sliding window Gemini enforces to
+# clear, even though src.gemini_transcribe.RateLimiter's preemptive throttle
+# should mostly prevent this from happening at all.
+RPM_BACKOFF_SECONDS = 60
 
 MANIFEST_PATH = os.path.join("data", "processed", "card_crops", "manifest.csv")
 CROPS_IMAGES_DIR = os.path.join("data", "processed", "card_crops", "images")
@@ -90,12 +98,58 @@ def is_quota_exhausted(error):
     return isinstance(error, genai_errors.ClientError) and error.code == 429
 
 
+def _quota_violation_ids(error):
+    """quotaId strings (e.g. "GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    from a 429's structured google.rpc.QuotaFailure detail, if the response body
+    included one. Empty list if not present/parseable."""
+    body = getattr(error, "details", None)
+    if not isinstance(body, dict):
+        return []
+    inner = body.get("error", body)
+    if not isinstance(inner, dict):
+        return []
+    quota_ids = []
+    for detail in inner.get("details") or []:
+        for violation in detail.get("violations") or []:
+            quota_id = violation.get("quotaId")
+            if quota_id:
+                quota_ids.append(quota_id)
+    return quota_ids
+
+
+def is_daily_quota_exhausted(error):
+    """True only for a 429 that's actually a per-day quota limit -- as opposed
+    to a per-minute (RPM) 429, which src.gemini_transcribe.RateLimiter's
+    preemptive throttle should mostly prevent but can still slip through
+    (clock skew against the API's window, a burst right at a minute
+    boundary). Only a genuine daily-quota 429 should make ModelRotation fall
+    forward to the next model -- a per-minute 429 means the current model
+    still has quota today, it just needs a brief pause before retrying."""
+    if not is_quota_exhausted(error):
+        return False
+    quota_ids = _quota_violation_ids(error)
+    if quota_ids:
+        return any("day" in quota_id.lower() for quota_id in quota_ids)
+    # No structured QuotaFailure detail to inspect -- fall back to the
+    # message text, which free-tier responses also spell out in words.
+    message = (error.message or "").lower()
+    if "per day" in message or "daily" in message:
+        return True
+    if "per minute" in message:
+        return False
+    # Genuinely ambiguous: treat as a transient per-minute condition rather
+    # than burning through the model rotation on an error we can't positively
+    # identify as a daily-quota exhaustion.
+    return False
+
+
 class ModelRotation:
     """Tries models in order (most capable first) and falls forward -- never
-    back -- to the next one once the current model's free-tier quota is
-    exhausted. Shared across a whole batch run, so once a model is exhausted
-    every later card skips straight past it instead of re-discovering that on
-    every single call."""
+    back -- to the next one once the current model's free-tier DAILY quota is
+    exhausted (see is_daily_quota_exhausted -- a per-minute/RPM 429 does not
+    advance this). Shared across a whole batch run, so once a model is
+    exhausted every later card skips straight past it instead of
+    re-discovering that on every single call."""
 
     def __init__(self, models):
         models = list(models)
@@ -121,7 +175,12 @@ def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, promp
     """Same return shape as call_gemini_once, plus "_model" recording which
     model in the rotation actually produced this sample -- self_consistency_scores
     only reads the field keys it knows about, so this rides along harmlessly
-    into transcribe_card_with_confidence's raw samples list."""
+    into transcribe_card_with_confidence's raw samples list.
+
+    Model rotation only advances on a genuine daily-quota 429
+    (is_daily_quota_exhausted) -- a per-minute (RPM) 429 retries the SAME
+    model after RPM_BACKOFF_SECONDS instead, since the model isn't actually
+    out of quota for the day."""
     while True:
         model = model_rotation.current
         try:
@@ -129,13 +188,28 @@ def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, promp
                                        prompt=prompt)
             return {**result, "_model": model}
         except genai_errors.ClientError as e:
-            if is_quota_exhausted(e) and model_rotation.advance():
-                continue
-            raise
+            if not is_quota_exhausted(e):
+                raise
+            if is_daily_quota_exhausted(e):
+                if model_rotation.advance():
+                    continue
+                raise
+            print(f"[rate-limit] {model} hit a per-minute 429 -- backing off "
+                  f"{RPM_BACKOFF_SECONDS}s and retrying the same model (not switching)...",
+                  flush=True)
+            time.sleep(RPM_BACKOFF_SECONDS)
+
+
+def _validate_rpm(rpm):
+    if rpm > MAX_SAFE_RPM:
+        raise ValueError(f"rpm={rpm} exceeds MAX_SAFE_RPM={MAX_SAFE_RPM} -- Gemini free-tier "
+                          "quota is 15 requests/minute per model, and this stays a safety "
+                          "margin below that rather than equal to it")
 
 
 def run_batch(image_files, relevance_flags, output_path, n_samples, rpm, limit, api_key, models,
               crops_images_dir=CROPS_IMAGES_DIR):
+    _validate_rpm(rpm)
     if isinstance(models, str):
         models = [models]
     model_rotation = ModelRotation(models)
@@ -207,6 +281,7 @@ def run_wholeimage_batch(image_files, merged_predictions, output_path, n_samples
     MISSING -- same resumable shape as run_batch (skip-on-resume via
     already_done, flush-per-row, model rotation), but reads the original
     uncropped photo and uses WHOLE_IMAGE_PROMPT instead of a card crop."""
+    _validate_rpm(rpm)
     if isinstance(models, str):
         models = [models]
     model_rotation = ModelRotation(models)

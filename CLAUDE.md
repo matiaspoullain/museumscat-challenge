@@ -146,8 +146,20 @@ The Gemini runners (`src/run_gemini_dev.py`, `src/run_gemini_test.py`) need
 `GEMINI_API_KEY` in the environment (or `--api-key`) — a free-tier Google AI Studio key,
 not Vertex AI. `src/gemini_transcribe.MODEL_FALLBACK_ORDER` lists the `-flash-lite`
 models tried in order; `src/gemini_batch_runner.ModelRotation` falls forward across them
-on a 429 (daily quota exhausted), since free-tier daily quotas are the scarce resource,
-not money.
+on a 429, since free-tier daily quotas are the scarce resource, not money.
+
+Both models' free-tier quota is 15 requests/minute, on top of the daily quota —
+two separate limits, and only the daily one should ever cause a model switch.
+`--rpm` (default 10) drives `src.gemini_transcribe.RateLimiter`'s preemptive
+per-minute throttle and is hard-capped at `src.gemini_transcribe.MAX_SAFE_RPM`
+(14, a safety margin below 15) by `src.gemini_batch_runner._validate_rpm` — passing
+`--rpm 15` or higher raises immediately rather than risking a 429. If a per-minute
+429 slips through anyway (clock skew, a burst at the minute boundary),
+`src.gemini_batch_runner.is_daily_quota_exhausted` tells it apart from a genuine
+daily-quota 429 (via the error's structured `quotaId`, e.g. `...PerDay...` vs
+`...PerMinute...`, falling back to message-text sniffing): a daily 429 advances
+`ModelRotation` to the next model, a per-minute 429 backs off 60s and retries the
+*same* model instead.
 
 Run anything with `conda run -n museumscat-challenge python ...` rather than assuming an
 activated shell.
