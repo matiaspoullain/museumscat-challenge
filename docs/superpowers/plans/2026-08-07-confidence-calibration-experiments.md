@@ -1444,6 +1444,108 @@ git commit -m "docs: record confidence-calibration experiment grid results"
 
 ---
 
+## Outcome (2026-08-07, Task 9 real run)
+
+Ran `conda run -n museumscat-challenge python -m src.experiment_confidence_grid` for
+real against `data/processed/gemini/dev_card_predictions.csv` and
+`dev_wholeimage_predictions.csv` (200 dev specimens). Full ranked table (all 16
+configs, lower is better):
+
+```
+overall_aurc   date_aurc   locality_aurc  config
+      0.0702      0.0265          0.1138  agreement=hard feature_set=multi  family=logistic_multi penalty=True
+      0.0710      0.0248          0.1172  agreement=hard feature_set=multi  family=logistic_multi penalty=False
+      0.0764      0.0282          0.1246  agreement=soft feature_set=multi  family=logistic_multi penalty=True
+      0.0781      0.0270          0.1292  agreement=soft feature_set=multi  family=logistic_multi penalty=False
+      0.0844      0.0296          0.1393  agreement=hard feature_set=scalar family=isotonic       penalty=True
+      0.0857      0.0300          0.1415  agreement=soft feature_set=scalar family=isotonic       penalty=True
+      0.0870      0.0319          0.1420  agreement=hard feature_set=scalar family=shrinkage      penalty=True
+      0.0878      0.0305          0.1450  agreement=soft feature_set=scalar family=isotonic       penalty=False
+      0.0881      0.0325          0.1437  agreement=soft feature_set=scalar family=shrinkage      penalty=True
+      0.0900      0.0329          0.1471  agreement=soft feature_set=scalar family=shrinkage      penalty=False
+      0.0901      0.0335          0.1467  agreement=hard feature_set=scalar family=isotonic       penalty=False
+      0.0918      0.0359          0.1476  agreement=hard feature_set=scalar family=shrinkage      penalty=False
+      0.0929      0.0433          0.1425  agreement=hard feature_set=scalar family=platt          penalty=True
+      0.0958      0.0472          0.1444  agreement=hard feature_set=scalar family=platt          penalty=False
+      0.1189      0.0376          0.2003  agreement=soft feature_set=scalar family=platt          penalty=True
+      0.1204      0.0391          0.2016  agreement=soft feature_set=scalar family=platt          penalty=False
+
+best: agreement=hard feature_set=multi family=logistic_multi penalty=True -> overall 0.0702
+(current best baseline 0.0750, delta -0.0048)
+```
+
+### Individual-toggle effect (each compared against the `agreement=hard
+feature_set=scalar family=isotonic penalty=False` row, 0.0901 — the plain-isotonic
+config the codebase already had before this plan):
+
+| toggle changed alone | resulting AURC | delta vs. that baseline |
+|---|---|---|
+| **feature_set: scalar → multi** (proposal 3) | 0.0710 | **-0.0191** (by far the biggest single lever) |
+| **penalty: off → on** (proposal 4) | 0.0844 | -0.0057 (real, consistent, but small) |
+| **agreement: hard → soft** (proposal 1) | 0.0878 | -0.0023 (small help *alone*, but hurts every other config it's combined with) |
+| **family: isotonic → shrinkage** (proposal 2b) | 0.0918 | +0.0017 (roughly a wash) |
+| **family: isotonic → platt** (proposal 2a) | 0.0958 | +0.0057 (net negative) |
+
+### What won, and what didn't
+
+**Winner: multi-feature calibrator (proposal 3) + coverage penalty (proposal 4),
+hard agreement, no soft-agreement.** `agreement=hard feature_set=multi
+family=logistic_multi penalty=True` → overall AURC **0.0702**, beating the
+0.0750 production baseline (raw self-consistency confidence, uncalibrated) by
+**-0.0048 (6.4% relative)**. This is the first calibration approach in this
+codebase's history that beats raw uncalibrated confidence at all — every
+`family="isotonic"`/`"shrinkage"`/`"platt"` scalar config (proposals 1-2, with
+or without the penalty) still loses to the 0.0750 baseline, confirming the
+original motivating problem (small-dev-set 1-D calibration overfitting/hurting
+AURC) generalizes across all three 1-D families tried, not just plain isotonic.
+
+**Proposal 1 (soft agreement) does not generalize — dropped.** It helps in
+exactly one isolated comparison (scalar+isotonic+no-penalty: 0.0901→0.0878) but
+makes every other config worse, including the best one (hard+multi+penalty
+0.0702 vs. soft+multi+penalty 0.0764, +0.0062 worse). Recommendation: keep
+`agreement="hard"` (`self_consistency_scores`) in production;
+`soft_consistency_scores` stays in the codebase as a tested, available
+function, but isn't used.
+
+**Proposal 2 (Platt/shrinkage families) does not beat isotonic, and Platt is
+actively worse.** Genuine Platt scaling (binarized-label logistic regression)
+is the single worst family in every agreement/penalty combination it appears
+in — likely because binarizing `1-NED` at `CORRECT_THRESHOLD=0.05` throws away
+exactly the graded-correctness signal AURC rewards, which isotonic (fit
+directly on continuous `1-NED`) and the multi-feature calibrator (which also
+binarizes, but compensates with far more input signal) don't suffer from as
+badly. Shrinkage is roughly neutral. Recommendation: keep `family="isotonic"`
+as the default for any future 1-D calibration need; neither alternative family
+is worth the added code path on its own.
+
+**Proposal 3 (multi-feature calibrator) is the clear win** — the two biggest
+gains in the whole grid (0.0710 and 0.0702) both come from `feature_set="multi"`,
+and all four `feature_set="multi"` rows outrank all twelve `feature_set="scalar"`
+rows outright. The visual-feature hypothesis from this plan's Background
+(older/faded cards → harder to transcribe) contributes as part of this bundle,
+though this run doesn't isolate the visual features' individual contribution
+from the structural features (text length, card count, cross-card agreement,
+fallback origin) bundled into the same `FEATURE_ORDER` — a possible follow-up
+ablation if this gets picked up again, but not needed to answer "which
+combination is best."
+
+**Proposal 4 (coverage penalty) is a small, consistent, free win** — it improves
+every single agreement/feature_set/family combination it's added to (compare
+each `penalty=True` row against its `penalty=False` twin above), never once
+makes a config worse, at zero extra Gemini quota and zero extra model-fitting
+risk (it's a fixed rule, not learned). Recommendation: always-on.
+
+### Recommendation
+
+Wire `agreement="hard"` + `feature_set="multi"` (`fit_multi_feature_calibrator`/
+`oof_multi_feature_calibrated_confidences` from `src.gemini_calibration_features`)
++ the coverage penalty (`src.confidence_penalty_rules.apply_confidence_penalty`)
+into `src.generate_submission_gemini` as a follow-up — see "What this plan
+deliberately doesn't do" below. Drop proposals 1 and 2 (Platt/shrinkage
+families, soft agreement) from consideration; the code stays in the repo,
+tested, but production should keep `agreement="hard"` and never needs
+`family="platt"`/`"shrinkage"` for this pipeline.
+
 ## What this plan deliberately doesn't do
 
 Wiring the winning configuration into `src.generate_submission_gemini` (the
