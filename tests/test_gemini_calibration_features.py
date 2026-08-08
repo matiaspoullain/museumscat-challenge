@@ -10,7 +10,9 @@ from src.gemini_calibration_features import (
     build_feature_rows,
     contributing_crops_by_specimen,
     fit_multi_feature_calibrator,
+    fit_pca_rf_calibrator,
     oof_multi_feature_calibrated_confidences,
+    oof_pca_rf_calibrated_confidences,
     predict_multi_feature,
 )
 
@@ -138,5 +140,68 @@ def test_fit_multi_feature_calibrator_degenerate_labels_returns_none():
 def test_oof_multi_feature_calibrated_confidences_covers_every_row():
     rows, correctness = _synthetic_rows()
     result = oof_multi_feature_calibrated_confidences(rows, correctness, n_folds=4, random_state=0)
+    assert len(result) == len(rows)
+    assert all(v is not None and 0.0 <= v <= 1.0 for v in result)
+
+
+def test_fit_multi_feature_calibrator_l2_default_sets_l2_penalty():
+    rows, correctness = _synthetic_rows()
+    pipeline = fit_multi_feature_calibrator(rows, correctness)
+    logistic = pipeline.named_steps["logisticregression"]
+    assert logistic.penalty == "l2"
+
+
+def test_fit_multi_feature_calibrator_l1_sets_l1_penalty_and_liblinear_solver():
+    rows, correctness = _synthetic_rows()
+    pipeline = fit_multi_feature_calibrator(rows, correctness, regularization="l1")
+    logistic = pipeline.named_steps["logisticregression"]
+    assert logistic.penalty == "l1"
+    assert logistic.solver == "liblinear"
+
+
+def test_fit_multi_feature_calibrator_l1_predictions_in_unit_range():
+    rows, correctness = _synthetic_rows()
+    pipeline = fit_multi_feature_calibrator(rows, correctness, regularization="l1")
+    predictions = predict_multi_feature(pipeline, rows)
+    assert all(0.0 <= p <= 1.0 for p in predictions)
+
+
+def test_fit_multi_feature_calibrator_l1_degenerate_labels_returns_none():
+    rows, _ = _synthetic_rows(n=4)
+    all_correct = [1.0, 1.0, 1.0, 1.0]
+    assert fit_multi_feature_calibrator(rows, all_correct, regularization="l1") is None
+
+
+def test_oof_multi_feature_calibrated_confidences_l1_regularization_covers_every_row():
+    rows, correctness = _synthetic_rows()
+    result = oof_multi_feature_calibrated_confidences(
+        rows, correctness, n_folds=4, random_state=0, regularization="l1"
+    )
+    assert len(result) == len(rows)
+    assert all(v is not None and 0.0 <= v <= 1.0 for v in result)
+
+
+def test_fit_pca_rf_calibrator_predicts_higher_confidence_for_higher_self_consistency():
+    rows, correctness = _synthetic_rows(n=30)
+    pipeline = fit_pca_rf_calibrator(rows, correctness, n_components=3, n_estimators=50)
+    assert pipeline is not None
+    high_row = dict(rows[0])   # self_consistency=0.95 case
+    low_row = dict(rows[1])    # self_consistency=0.4 case
+    predictions = predict_multi_feature(pipeline, [high_row, low_row])
+    assert predictions[0] > predictions[1]
+    assert all(0.0 <= p <= 1.0 for p in predictions)
+
+
+def test_fit_pca_rf_calibrator_degenerate_labels_returns_none():
+    rows, _ = _synthetic_rows(n=4)
+    all_correct = [1.0, 1.0, 1.0, 1.0]
+    assert fit_pca_rf_calibrator(rows, all_correct, n_components=2, n_estimators=10) is None
+
+
+def test_oof_pca_rf_calibrated_confidences_covers_every_row():
+    rows, correctness = _synthetic_rows(n=30)
+    result = oof_pca_rf_calibrated_confidences(
+        rows, correctness, n_folds=4, random_state=0, n_components=3, n_estimators=50
+    )
     assert len(result) == len(rows)
     assert all(v is not None and 0.0 <= v <= 1.0 for v in result)
