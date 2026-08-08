@@ -1444,17 +1444,26 @@ git commit -m "docs: record confidence-calibration experiment grid results"
 
 ---
 
-## Outcome (2026-08-07, Task 9 real run)
+## Outcome (2026-08-07, Task 9 real run; revised 2026-08-07 after final review)
 
 Ran `conda run -n museumscat-challenge python -m src.experiment_confidence_grid` for
 real against `data/processed/gemini/dev_card_predictions.csv` and
-`dev_wholeimage_predictions.csv` (200 dev specimens). Full ranked table (all 16
-configs, lower is better):
+`dev_wholeimage_predictions.csv` (200 dev specimens). This section was revised
+after a final whole-branch code review found two Important issues with the
+original 16-config run below: the grid never tested a "no fitted calibrator at
+all" arm (added as `feature_set="none"`, 2 new configs), and the winning
+config's headline margin over baseline turned out to be seed-sensitive. Both
+are folded in below; the table, per-toggle breakdown, and the proposal 1/2/4
+conclusions are otherwise unchanged from the original run.
+
+Full ranked table (all 18 configs, lower is better):
 
 ```
 overall_aurc   date_aurc   locality_aurc  config
       0.0702      0.0265          0.1138  agreement=hard feature_set=multi  family=logistic_multi penalty=True
       0.0710      0.0248          0.1172  agreement=hard feature_set=multi  family=logistic_multi penalty=False
+      0.0715      0.0258          0.1172  agreement=hard feature_set=none   family=raw            penalty=True
+      0.0751      0.0293          0.1210  agreement=hard feature_set=none   family=raw            penalty=False
       0.0764      0.0282          0.1246  agreement=soft feature_set=multi  family=logistic_multi penalty=True
       0.0781      0.0270          0.1292  agreement=soft feature_set=multi  family=logistic_multi penalty=False
       0.0844      0.0296          0.1393  agreement=hard feature_set=scalar family=isotonic       penalty=True
@@ -1470,9 +1479,15 @@ overall_aurc   date_aurc   locality_aurc  config
       0.1189      0.0376          0.2003  agreement=soft feature_set=scalar family=platt          penalty=True
       0.1204      0.0391          0.2016  agreement=soft feature_set=scalar family=platt          penalty=False
 
-best: agreement=hard feature_set=multi family=logistic_multi penalty=True -> overall 0.0702
+best: agreement=hard feature_set=multi  family=logistic_multi penalty=True -> overall 0.0702
 (current best baseline 0.0750, delta -0.0048)
 ```
+
+The new `agreement=hard feature_set=none family=raw penalty=False` row (0.0751)
+is, by construction, the same computation `BASELINE_AURC=0.0750` in
+`src.experiment_confidence_grid` already names as "current best baseline" —
+its near-exact match (0.0751 vs 0.0750) is a sanity check that the grid's raw
+arm is wired correctly, not a new finding.
 
 ### Individual-toggle effect (each compared against the `agreement=hard
 feature_set=scalar family=isotonic penalty=False` row, 0.0901 — the plain-isotonic
@@ -1488,16 +1503,55 @@ config the codebase already had before this plan):
 
 ### What won, and what didn't
 
-**Winner: multi-feature calibrator (proposal 3) + coverage penalty (proposal 4),
-hard agreement, no soft-agreement.** `agreement=hard feature_set=multi
-family=logistic_multi penalty=True` → overall AURC **0.0702**, beating the
-0.0750 production baseline (raw self-consistency confidence, uncalibrated) by
-**-0.0048 (6.4% relative)**. This is the first calibration approach in this
-codebase's history that beats raw uncalibrated confidence at all — every
-`family="isotonic"`/`"shrinkage"`/`"platt"` scalar config (proposals 1-2, with
-or without the penalty) still loses to the 0.0750 baseline, confirming the
-original motivating problem (small-dev-set 1-D calibration overfitting/hurting
-AURC) generalizes across all three 1-D families tried, not just plain isotonic.
+**Nominal winner: multi-feature calibrator (proposal 3) + coverage penalty
+(proposal 4), hard agreement.** `agreement=hard feature_set=multi
+family=logistic_multi penalty=True` → overall AURC **0.0702** at this repo's
+default `random_state=0` (`RANDOM_STATE` in `src.eda_card_visual_features`,
+used everywhere else for leakage-free OOF evaluation), beating the 0.0750
+baseline by **-0.0048**. But two things complicate calling this a clean win —
+both found in a final code review, after the number above had already been
+written up as the headline result:
+
+**Caveat A — a "no fitted calibrator at all" arm was missing, and it's nearly
+as good.** The original 16-config grid only ever tested *some* fitted
+calibrator (isotonic/platt/shrinkage/multi-feature); it never tried using the
+raw (post-cleanup-and-fallback) self-consistency confidence directly, with
+only the deterministic coverage penalty optionally layered on top —
+`feature_set="none"`, `calibrator_family="raw"`, 2 new configs (`penalty`
+False/True, `agreement` fixed to `"hard"`). Its penalized form scores **0.0715**
+— third-best in the whole 18-row grid, beaten only by the two `feature_set=
+"multi"` rows, by a margin (0.0013 below the nominal winner) smaller than the
+multi-feature calibrator's own run-to-run noise (Caveat B). It does this with
+**zero fitted parameters and zero fold variance** — the same number every time,
+on any machine, forever.
+
+**Caveat B — the multi-feature calibrator's edge over that raw arm doesn't
+hold up across KFold seeds.** `oof_multi_feature_calibrated_confidences` splits
+its 5 folds via `KFold(shuffle=True, random_state=...)`. Re-running the nominal
+winner across `random_state` 0 through 7 instead of always using the repo
+default (0):
+
+| random_state | overall AURC |
+|---|---|
+| 0 (repo default — the number reported above) | 0.0702 |
+| 1 | 0.0691 |
+| 2 | 0.0796 |
+| 3 | 0.0739 |
+| 4 | 0.0717 |
+| 5 | 0.0684 |
+| 6 | 0.0705 |
+| 7 | 0.0748 |
+
+Range **0.0684–0.0796**, mean **0.0723**. `random_state=2` (0.0796) loses
+outright to the 0.0751 raw baseline; `random_state=7` (0.0748) beats it by a
+margin (0.0003) well inside noise. Most tellingly: the **mean across all 8
+seeds (0.0723) is worse than the deterministic raw+penalty arm's 0.0715** — the
+headline 0.0702 comes from a seed on the favorable side of this distribution,
+not its center. The plan's original "-0.0048, first calibration approach to
+beat raw confidence" framing was a single point estimate from one arbitrary
+seed and overstated how settled that margin is; the honest statement is "beats
+raw+penalty at the default seed, roughly a wash with it on average, with real
+variance either direction."
 
 **Proposal 1 (soft agreement) does not generalize — dropped.** It helps in
 exactly one isolated comparison (scalar+isotonic+no-penalty: 0.0901→0.0878) but
@@ -1518,33 +1572,55 @@ badly. Shrinkage is roughly neutral. Recommendation: keep `family="isotonic"`
 as the default for any future 1-D calibration need; neither alternative family
 is worth the added code path on its own.
 
-**Proposal 3 (multi-feature calibrator) is the clear win** — the two biggest
-gains in the whole grid (0.0710 and 0.0702) both come from `feature_set="multi"`,
-and all four `feature_set="multi"` rows outrank all twelve `feature_set="scalar"`
-rows outright. The visual-feature hypothesis from this plan's Background
-(older/faded cards → harder to transcribe) contributes as part of this bundle,
-though this run doesn't isolate the visual features' individual contribution
-from the structural features (text length, card count, cross-card agreement,
-fallback origin) bundled into the same `FEATURE_ORDER` — a possible follow-up
-ablation if this gets picked up again, but not needed to answer "which
-combination is best."
+**Proposal 3 (multi-feature calibrator) is still the best-scoring single
+config at the repo's default seed, but its margin over doing nothing
+(Caveat A/B) is small and noisy rather than decisive.** The two best rows in
+the whole grid (0.0710 and 0.0702) both come from `feature_set="multi"`, and
+all four `feature_set="multi"` rows outrank all twelve `feature_set="scalar"`
+rows outright — the multi-feature calibrator is unambiguously better than any
+*fitted 1-D* calibrator tried. What it isn't unambiguously better than is the
+*unfitted* raw+penalty arm — see Caveats A and B. The visual-feature hypothesis
+from this plan's Background (older/faded cards → harder to transcribe)
+contributes as part of the multi-feature bundle, though this run doesn't
+isolate the visual features' individual contribution from the structural
+features (text length, card count, cross-card agreement, fallback origin)
+bundled into the same `FEATURE_ORDER` — a possible follow-up ablation if this
+gets picked up again.
 
-**Proposal 4 (coverage penalty) is a small, consistent, free win** — it improves
-every single agreement/feature_set/family combination it's added to (compare
-each `penalty=True` row against its `penalty=False` twin above), never once
+**Proposal 4 (coverage penalty) is a small, consistent, free win — the one
+finding untouched by either caveat.** It improves every single
+agreement/feature_set/family combination it's added to, including the new
+`feature_set="none"` arm (0.0751→0.0715, another confirmation), never once
 makes a config worse, at zero extra Gemini quota and zero extra model-fitting
-risk (it's a fixed rule, not learned). Recommendation: always-on.
+risk (it's a fixed rule, not learned, so it has no seed-sensitivity problem
+either). Recommendation: always-on, regardless of which calibrator (or no
+calibrator) sits underneath it.
 
 ### Recommendation
 
-Wire `agreement="hard"` + `feature_set="multi"` (`fit_multi_feature_calibrator`/
-`oof_multi_feature_calibrated_confidences` from `src.gemini_calibration_features`)
-+ the coverage penalty (`src.confidence_penalty_rules.apply_confidence_penalty`)
-into `src.generate_submission_gemini` as a follow-up — see "What this plan
-deliberately doesn't do" below. Drop proposals 1 and 2 (Platt/shrinkage
-families, soft agreement) from consideration; the code stays in the repo,
-tested, but production should keep `agreement="hard"` and never needs
-`family="platt"`/`"shrinkage"` for this pipeline.
+**Revised recommendation: wire `agreement="hard"` + `feature_set="none"` (raw
+self-consistency confidence, no fitted calibrator) + the coverage penalty
+(`src.confidence_penalty_rules.apply_confidence_penalty`) into
+`src.generate_submission_gemini`, not the multi-feature calibrator.** This
+reverses the pre-review recommendation in this section, and agrees with the
+reviewer's own lean. The reasoning: the multi-feature calibrator's entire
+case rested on beating the 0.0750 baseline by -0.0048 at one specific seed: once
+the honest comparison is "raw+penalty (0.0715, zero variance) vs. multi-feature
++penalty (mean 0.0723, range 0.0684–0.0796 across seeds)", the raw arm's
+*average* case is actually better than the multi-feature calibrator's, and the
+multi-feature calibrator only pulls ahead at particular seed choices — an
+edge that isn't reliably there is not a case for adding a fitted model (five
+extra features, a `LogisticRegression`, a `SimpleImputer`, `StandardScaler`,
+and OpenCV feature extraction per card crop) to a submission pipeline, when a
+one-line multiply gets a deterministic result this close. If a future dev-set
+refresh (more than 200 labeled specimens) shrinks the multi-feature
+calibrator's fold-to-fold variance enough that it clearly and consistently
+beats 0.0715 across many seeds, it should be reconsidered then — the code
+(`src.gemini_calibration_features`) stays in the repo, tested, ready to
+revisit. Drop proposals 1 and 2 (Platt/shrinkage families, soft agreement)
+from consideration either way; production should keep `agreement="hard"` and
+never needs `family="platt"`/`"shrinkage"`/`"logistic_multi"` for this
+pipeline under this recommendation.
 
 ## What this plan deliberately doesn't do
 
