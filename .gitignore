@@ -3,6 +3,7 @@ __pycache__/
 .ipynb_checkpoints/
 .pytest_cache/
 .playwright-mcp/
+.superpowers/
 
 # Competition data (images especially) is not committed to GitHub
 data/raw/
