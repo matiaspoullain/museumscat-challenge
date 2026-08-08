@@ -45,8 +45,11 @@ How the pipeline got here, in order:
    `data/processed/card_crops/`) to Gemini, sampled 3x at temperature>0, scored by
    self-consistency (fraction of samples agreeing) rather than the model's own
    self-reported confidence. Multi-card merge is unchanged (`src/merge_records.py`).
-   Runners: `src/run_gemini_dev.py` (200 labeled specimens), `src/run_gemini_test.py`
-   (3300-image test set, **not yet run** — gated on the next step).
+   Runners: `src/run_gemini_dev.py` (200 labeled specimens, bundles both the
+   per-card pass and the whole-image fallback below in one script since the
+   dev set finishes within a single quota budget), `src/run_gemini_test.py`
+   (3300-image test set per-card pass — the two are split into separate
+   scripts for test because this one alone spans multiple days of quota).
 2. **Whole-image fallback** (`docs/superpowers/specs/2026-08-07-gemini-wholeimage-fallback-design.md`):
    for specimens where both fields came back `"MISSING"` after the per-card pass
    (failed detection, an over-eager confound filter, or a genuinely-missing label),
@@ -99,7 +102,12 @@ repo's conventions.
    3300-image test set — this is where free-tier Gemini quota usage becomes real.
    `src/gemini_batch_runner.ModelRotation` already handles falling forward across
    `MODEL_FALLBACK_ORDER` models on daily-quota 429s, and both runners are resumable
-   (`already_done`, flush-per-row) if a run gets interrupted.
+   (`already_done`, flush-per-row) if a run gets interrupted. Once `run_gemini_test.py`
+   prints `[done] nothing to do` (every relevant test card crop transcribed), run
+   `src/run_gemini_test_wholeimage.py` for the phase-2 whole-image fallback pass —
+   it refuses to start early (`src.gemini_batch_runner.pending_crop_count` gate) since
+   a specimen with untranscribed cards looks identical to a genuinely both-MISSING one,
+   and running the fallback on it early would waste quota on a wrong classification.
 4. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10
    submissions/day, 2 final, competition ends 2026-08-31. Never call it from a script
    or without explicit instruction.

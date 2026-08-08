@@ -79,6 +79,19 @@ def already_done(output_path, key_column="crop_filename"):
         return {row[key_column] for row in csv.DictReader(f)}
 
 
+def pending_crop_count(image_files, relevance_flags, output_path, manifest_path=MANIFEST_PATH):
+    """How many relevant card crops for image_files still have no row in
+    output_path -- used to gate a whole-image fallback pass on the per-card
+    pass being fully finished first. merge_predictions_by_specimen can't tell
+    "never sent to Gemini yet" from "sent, and this card had no value" (both
+    just look like no contribution), so running the fallback pass while any
+    crop is still pending would misclassify those specimens as genuinely
+    both-fields-MISSING and spend fallback quota on them prematurely."""
+    all_pending = pending_crops(image_files, relevance_flags, manifest_path=manifest_path)
+    done = already_done(output_path)
+    return sum(1 for crop_filename, _ in all_pending if crop_filename not in done)
+
+
 def wholeimage_pending(image_files, merged_predictions):
     """image_files whose merged per-card prediction (src.calibrate_gemini_confidence.
     merge_predictions_by_specimen's output shape) has both fields "MISSING" --

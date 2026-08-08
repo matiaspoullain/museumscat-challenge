@@ -14,6 +14,7 @@ from src.gemini_batch_runner import (
     already_done,
     is_daily_quota_exhausted,
     is_quota_exhausted,
+    pending_crop_count,
     wholeimage_pending,
 )
 
@@ -105,6 +106,65 @@ def test_already_done_reads_custom_key_column():
 
 def test_already_done_missing_file_returns_empty_set():
     assert already_done("/nonexistent/path.csv", key_column="source_image_file") == set()
+
+
+def _write_manifest(path, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["source_image_file", "card_index", "crop_filename"])
+        writer.writeheader()
+        for source_image_file, card_index, crop_filename in rows:
+            writer.writerow({"source_image_file": source_image_file, "card_index": card_index,
+                              "crop_filename": crop_filename})
+
+
+def _write_done_crops(path, crop_filenames):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["crop_filename"])
+        writer.writeheader()
+        for crop_filename in crop_filenames:
+            writer.writerow({"crop_filename": crop_filename})
+
+
+def test_pending_crop_count_zero_when_all_relevant_crops_done():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        manifest_path = os.path.join(tmp_dir, "manifest.csv")
+        output_path = os.path.join(tmp_dir, "predictions.csv")
+        _write_manifest(manifest_path, [("a.jpeg", 0, "a_card00.jpeg"), ("a.jpeg", 1, "a_card01.jpeg")])
+        _write_done_crops(output_path, ["a_card00.jpeg", "a_card01.jpeg"])
+        relevance_flags = {"a_card00.jpeg": True, "a_card01.jpeg": True}
+
+        count = pending_crop_count(["a.jpeg"], relevance_flags, output_path, manifest_path=manifest_path)
+
+        assert count == 0
+
+
+def test_pending_crop_count_counts_relevant_crops_not_yet_transcribed():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        manifest_path = os.path.join(tmp_dir, "manifest.csv")
+        output_path = os.path.join(tmp_dir, "predictions.csv")
+        _write_manifest(manifest_path, [("a.jpeg", 0, "a_card00.jpeg"), ("a.jpeg", 1, "a_card01.jpeg")])
+        _write_done_crops(output_path, ["a_card00.jpeg"])
+        relevance_flags = {"a_card00.jpeg": True, "a_card01.jpeg": True}
+
+        count = pending_crop_count(["a.jpeg"], relevance_flags, output_path, manifest_path=manifest_path)
+
+        assert count == 1
+
+
+def test_pending_crop_count_ignores_confound_flagged_crops():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        manifest_path = os.path.join(tmp_dir, "manifest.csv")
+        output_path = os.path.join(tmp_dir, "predictions.csv")
+        _write_manifest(manifest_path, [("a.jpeg", 0, "a_card00.jpeg"), ("a.jpeg", 1, "a_card01.jpeg")])
+        _write_done_crops(output_path, [])
+        # card01 is flagged confound -- never sent to Gemini, so it shouldn't
+        # count as "pending" (it's not something a future run_batch call would
+        # ever try to transcribe)
+        relevance_flags = {"a_card00.jpeg": True, "a_card01.jpeg": False}
+
+        count = pending_crop_count(["a.jpeg"], relevance_flags, output_path, manifest_path=manifest_path)
+
+        assert count == 1
 
 
 def test_is_daily_quota_exhausted_true_for_per_day_quota_id():
