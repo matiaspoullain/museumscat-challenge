@@ -15,6 +15,7 @@ Usage:
     conda run -n museumscat-challenge python -m src.calibrate_gemini_confidence
 """
 import csv
+import json
 import os
 
 import joblib
@@ -46,6 +47,21 @@ def load_predictions_by_crop(path=DEV_PREDICTIONS_PATH):
                 "verbatimDate": (row["verbatimDate"], float(row["verbatimDate_confidence"])),
                 "verbatimLocality": (row["verbatimLocality"], float(row["verbatimLocality_confidence"])),
             }
+    return by_crop
+
+
+def rescored_predictions_by_crop(path, scorer_fn):
+    """Re-derives {crop_filename: {field: (text, confidence)}} from each row's
+    stored raw_samples_json using scorer_fn (self_consistency_scores or
+    soft_consistency_scores from src.gemini_transcribe), instead of the
+    confidence columns already written to the CSV -- lets a new confidence-
+    scoring function be evaluated against the existing dev predictions without
+    re-calling the Gemini API."""
+    by_crop = {}
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            samples = json.loads(row["raw_samples_json"])
+            by_crop[row["crop_filename"]] = scorer_fn(samples)
     return by_crop
 
 

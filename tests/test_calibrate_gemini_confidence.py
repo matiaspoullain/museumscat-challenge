@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import tempfile
 
@@ -11,8 +12,10 @@ from src.calibrate_gemini_confidence import (
     load_wholeimage_predictions,
     merge_predictions_by_specimen,
     oof_calibrated_confidences,
+    rescored_predictions_by_crop,
     save_calibrators,
 )
+from src.gemini_transcribe import self_consistency_scores, soft_consistency_scores
 
 
 def test_merge_predictions_by_specimen_joins_two_cards():
@@ -167,3 +170,33 @@ def test_save_and_load_calibrators_roundtrip():
             original = calibrators[field].predict([0.6])[0]
             restored = loaded[field].predict([0.6])[0]
             assert original == restored
+
+
+def test_rescored_predictions_by_crop_matches_direct_scorer_call():
+    samples = [
+        {"verbatimDate": "1.7.2000", "verbatimLocality": "Kb"},
+        {"verbatimDate": "1.7.2000", "verbatimLocality": "Kb"},
+        {"verbatimDate": "1.7.2000", "verbatimLocality": "Kob"},
+    ]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "predictions.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=[
+                "crop_filename", "source_image_file", "verbatimDate", "verbatimDate_confidence",
+                "verbatimLocality", "verbatimLocality_confidence", "models_used", "raw_samples_json",
+            ])
+            writer.writeheader()
+            # the stored confidence columns are deliberately wrong (0.1) --
+            # rescored_predictions_by_crop must ignore them and use raw_samples_json
+            writer.writerow({
+                "crop_filename": "a_card00.jpeg", "source_image_file": "a.jpeg",
+                "verbatimDate": "1.7.2000", "verbatimDate_confidence": "0.1",
+                "verbatimLocality": "Kb", "verbatimLocality_confidence": "0.1",
+                "models_used": "gemini-3.5-flash-lite", "raw_samples_json": json.dumps(samples),
+            })
+        hard = rescored_predictions_by_crop(path, self_consistency_scores)
+        soft = rescored_predictions_by_crop(path, soft_consistency_scores)
+
+    assert hard["a_card00.jpeg"] == self_consistency_scores(samples)
+    assert soft["a_card00.jpeg"] == soft_consistency_scores(samples)
+    assert soft["a_card00.jpeg"]["verbatimLocality"][1] > hard["a_card00.jpeg"]["verbatimLocality"][1]

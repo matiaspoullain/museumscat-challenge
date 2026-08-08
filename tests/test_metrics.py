@@ -1,4 +1,4 @@
-from src.metrics import aurc, best_pipe_ned, edit_distance, ned, normalize_date_punctuation
+from src.metrics import CORRECT_THRESHOLD, aurc, best_pipe_ned, edit_distance, ned, normalize_date_punctuation
 
 
 def test_edit_distance_identical():
@@ -56,3 +56,7 @@ def test_aurc_perfect_calibration_beats_inverted():
 
 def test_aurc_all_zero_error_is_zero():
     assert aurc([0.0, 0.0, 0.0], [0.9, 0.1, 0.5]) == 0.0
+
+
+def test_correct_threshold_is_a_small_tolerance():
+    assert 0.0 < CORRECT_THRESHOLD < 0.2

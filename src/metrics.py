@@ -1,6 +1,12 @@
 import itertools
 import re
 
+# An NED at or below this counts as "correct" wherever a binary correct/incorrect
+# label is needed (Platt-style calibration, high-confidence-error mining) --
+# tolerates trivial punctuation/whitespace noise the scorer itself doesn't
+# already normalize away, without being loose enough to call a real mistake right.
+CORRECT_THRESHOLD = 0.05
+
 
 def edit_distance(a, b):
     m, n = len(a), len(b)
