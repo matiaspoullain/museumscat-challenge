@@ -2,6 +2,7 @@ import csv
 import os
 import tempfile
 
+import httpx
 import pytest
 from google.genai import errors as genai_errors
 
@@ -211,3 +212,25 @@ def test_call_with_fallback_reraises_non_quota_errors():
 
     with pytest.raises(genai_errors.ClientError):
         _call_with_fallback(client, b"fake-bytes", rotation, rate_limiter=None)
+
+
+def test_call_with_fallback_retries_same_model_on_timeout():
+    client = _FlakyClient([httpx.TimeoutException("stalled"), _SUCCESS_TEXT])
+    rotation = ModelRotation(["a", "b"])
+
+    result = _call_with_fallback(client, b"fake-bytes", rotation, rate_limiter=None)
+
+    assert result["_model"] == "a"
+    assert client.models.calls == ["a", "a"]
+    assert rotation.current == "a"
+
+
+def test_call_with_fallback_retries_same_model_on_connect_error():
+    client = _FlakyClient([httpx.ConnectError("refused"), _SUCCESS_TEXT])
+    rotation = ModelRotation(["a", "b"])
+
+    result = _call_with_fallback(client, b"fake-bytes", rotation, rate_limiter=None)
+
+    assert result["_model"] == "a"
+    assert client.models.calls == ["a", "a"]
+    assert rotation.current == "a"

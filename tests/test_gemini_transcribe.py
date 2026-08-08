@@ -4,10 +4,12 @@ import pytest
 
 from src.gemini_transcribe import (
     PROMPT,
+    REQUEST_TIMEOUT_MS,
     WHOLE_IMAGE_PROMPT,
     RateLimiter,
     _normalize_for_matching,
     _parse_response_json,
+    build_client,
     call_gemini_once,
     self_consistency_scores,
     soft_consistency_scores,
@@ -185,3 +187,8 @@ def test_rate_limiter_does_not_block_under_the_limit():
         limiter.wait()
     assert time.perf_counter() - start < 0.5
     assert len(limiter._call_times) == 5
+
+
+def test_build_client_sets_request_timeout():
+    client = build_client(api_key="fake-key")
+    assert client._api_client._http_options.timeout == REQUEST_TIMEOUT_MS

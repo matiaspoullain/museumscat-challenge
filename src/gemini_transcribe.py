@@ -170,14 +170,27 @@ class RateLimiter:
         self._call_times.append(time.monotonic())
 
 
+# Some requests observed to hang far longer than a normal Gemini call
+# (transport-level stall, not a 429) and never return -- REQUEST_TIMEOUT_MS
+# bounds how long httpx waits before raising httpx.TimeoutException, so a
+# stuck request gets cancelled instead of blocking the batch run forever.
+# src.gemini_batch_runner._call_with_fallback retries the same model when
+# that happens.
+REQUEST_TIMEOUT_MS = 120_000
+
+
 def build_client(api_key):
     # Short retry budget: a daily-quota 429 won't resolve by retrying the same
     # model within seconds, so we want it to surface quickly and let
     # ModelRotation switch models rather than burn a minute of backoff first.
+    # The same retry_options also covers REQUEST_TIMEOUT_MS timeouts (the SDK
+    # retries httpx.TimeoutException/ConnectError, not just retriable HTTP
+    # status codes) before _call_with_fallback ever sees one.
     return genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
-            retry_options=types.HttpRetryOptions(attempts=2, initial_delay=1.0, max_delay=5.0)
+            timeout=REQUEST_TIMEOUT_MS,
+            retry_options=types.HttpRetryOptions(attempts=2, initial_delay=1.0, max_delay=5.0),
         ),
     )
 

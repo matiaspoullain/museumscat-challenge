@@ -11,6 +11,7 @@ import json
 import os
 import time
 
+import httpx
 from google.genai import errors as genai_errors
 
 from src.gemini_transcribe import (
@@ -180,13 +181,20 @@ def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, promp
     Model rotation only advances on a genuine daily-quota 429
     (is_daily_quota_exhausted) -- a per-minute (RPM) 429 retries the SAME
     model after RPM_BACKOFF_SECONDS instead, since the model isn't actually
-    out of quota for the day."""
+    out of quota for the day. A hung request (src.gemini_transcribe.
+    REQUEST_TIMEOUT_MS exceeded, or a transport-level connect failure) is
+    also just retried on the same model, after build_client's own
+    retry_options budget is exhausted -- it's not a quota signal at all."""
     while True:
         model = model_rotation.current
         try:
             result = call_gemini_once(client, image_bytes, model=model, rate_limiter=rate_limiter,
                                        prompt=prompt)
             return {**result, "_model": model}
+        except (httpx.TimeoutException, httpx.ConnectError):
+            print(f"[timeout] {model} request stalled past the retry budget -- "
+                  "cancelling and retrying the same model...", flush=True)
+            continue
         except genai_errors.ClientError as e:
             if not is_quota_exhausted(e):
                 raise

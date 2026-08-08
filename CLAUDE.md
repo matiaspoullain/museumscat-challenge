@@ -161,6 +161,12 @@ daily-quota 429 (via the error's structured `quotaId`, e.g. `...PerDay...` vs
 `ModelRotation` to the next model, a per-minute 429 backs off 60s and retries the
 *same* model instead.
 
+Individual requests have been observed to occasionally hang (a transport-level
+stall, not a 429). `src.gemini_transcribe.REQUEST_TIMEOUT_MS` (120s) bounds
+this via `HttpOptions.timeout`, so httpx cancels a stuck request instead of
+blocking the batch run indefinitely; `_call_with_fallback` retries the same
+model on the resulting `httpx.TimeoutException`/`ConnectError`.
+
 Run anything with `conda run -n museumscat-challenge python ...` rather than assuming an
 activated shell.
 
