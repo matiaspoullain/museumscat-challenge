@@ -24,6 +24,7 @@ from src.calibrate_gemini_confidence import (
     oof_calibrated_confidences,
 )
 from src.clean_gemini_predictions import clean_merged_predictions
+from src.confidence_penalty_rules import apply_confidence_penalty, count_processed_and_contributing
 from src.metrics import aurc, best_pipe_ned
 from src.pipeline import load_manifest
 
@@ -94,6 +95,19 @@ def main():
     }
     _print_report("raw confidence + cleanup + whole-image fallback",
                   fallback_errors_by_field, fallback_confidences)
+
+    penalized_confidences = {field: [] for field in FIELD_IS_DATE}
+    for field in FIELD_IS_DATE:
+        for _, row in ground_truth_df.iterrows():
+            n_processed, n_contributing = count_processed_and_contributing(
+                row["image_file"], field, manifest_by_image, predictions_by_crop
+            )
+            raw_confidence = with_fallback[row["image_file"]][field][1]
+            penalized_confidences[field].append(
+                apply_confidence_penalty(raw_confidence, n_processed, n_contributing)
+            )
+    _print_report("raw confidence + cleanup + whole-image fallback + coverage penalty (production config)",
+                  fallback_errors_by_field, penalized_confidences)
 
 
 if __name__ == "__main__":

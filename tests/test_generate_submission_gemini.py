@@ -1,3 +1,5 @@
+import pytest
+
 from src.generate_submission import REQUIRED_COLUMNS
 from src.generate_submission_gemini import build_submission_df
 
@@ -45,3 +47,16 @@ def test_build_submission_df_applies_wholeimage_fallback_and_cleans_it():
     row = df.set_index("image_file").loc["a.jpeg"]
     assert row["verbatimDate"] == "22.5.1977"
     assert row["verbatimLocality"] == "Bøtø"  # fallback value also gets ö->ø + trailing-period cleanup
+
+
+def test_build_submission_df_applies_undercoverage_confidence_penalty():
+    manifest_by_image = {"a.jpeg": ["a_card00.jpeg", "a_card01.jpeg"]}
+    predictions_by_crop = {
+        "a_card00.jpeg": {"verbatimDate": ("22.5.1977", 0.9), "verbatimLocality": ("Kb", 0.9)},
+        "a_card01.jpeg": {"verbatimDate": ("MISSING", 0.7), "verbatimLocality": ("MISSING", 0.7)},
+    }
+    df = build_submission_df(["a.jpeg"], manifest_by_image, predictions_by_crop)
+    row = df.set_index("image_file").loc["a.jpeg"]
+    # 2 cards processed but only 1 contributed a value -> flagged, penalized by 0.7x
+    assert row["verbatimDate_confidence"] == pytest.approx(0.9 * 0.7)
+    assert row["verbatimLocality_confidence"] == pytest.approx(0.9 * 0.7)

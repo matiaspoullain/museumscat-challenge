@@ -1,7 +1,15 @@
 """Builds data/processed/submission_gemini.csv from the Gemini per-card
 test-set predictions (src.run_gemini_test's output): merges per-specimen
-(src.calibrate_gemini_confidence.merge_predictions_by_specimen) and applies
-src.clean_gemini_predictions' text cleanup.
+(src.calibrate_gemini_confidence.merge_predictions_by_specimen), applies
+src.clean_gemini_predictions' text cleanup, overlays the whole-image fallback
+(src.calibrate_gemini_confidence.apply_wholeimage_fallback) for specimens
+missing both fields, and applies src.confidence_penalty_rules' fixed
+under-coverage penalty. This is the winning config from
+docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md
+(dev AURC 0.0715): raw self-consistency confidence (hard agreement, i.e.
+src.gemini_transcribe.self_consistency_scores -- already how
+src.run_gemini_test's predictions CSV is scored, so no rescoring needed here),
+no fitted calibrator.
 
 Confidence is left as raw self-consistency, not isotonic-calibrated -- dev-set
 evaluation (src.evaluate_gemini_dev) showed calibration make AURC *worse*
@@ -25,9 +33,11 @@ import pandas as pd
 from src.calibrate_gemini_confidence import (
     apply_wholeimage_fallback,
     load_predictions_by_crop,
+    load_wholeimage_predictions,
     merge_predictions_by_specimen,
 )
 from src.clean_gemini_predictions import clean_merged_predictions
+from src.confidence_penalty_rules import apply_confidence_penalty, count_processed_and_contributing
 from src.generate_submission import REQUIRED_COLUMNS, validate_submission
 from src.pipeline import load_manifest
 
@@ -54,19 +64,25 @@ def build_submission_df(image_files, manifest_by_image, predictions_by_crop,
         row = {"image_file": image_file}
         for field in FIELDS:
             text, confidence = cleaned[image_file][field]
+            n_processed, n_contributing = count_processed_and_contributing(
+                image_file, field, manifest_by_image, predictions_by_crop
+            )
             row[field] = text
-            row[f"{field}_confidence"] = confidence
+            row[f"{field}_confidence"] = apply_confidence_penalty(confidence, n_processed, n_contributing)
         rows.append(row)
     return pd.DataFrame(rows, columns=REQUIRED_COLUMNS)
 
 
 def generate_submission_gemini(test_csv_path=TEST_CSV_PATH, manifest_path=MANIFEST_PATH,
-                                predictions_path=TEST_PREDICTIONS_PATH, output_path=OUTPUT_PATH):
+                                predictions_path=TEST_PREDICTIONS_PATH,
+                                wholeimage_predictions_path=TEST_WHOLEIMAGE_PREDICTIONS_PATH,
+                                output_path=OUTPUT_PATH):
     image_files = pd.read_csv(test_csv_path)["image_file"].tolist()
     manifest_by_image = load_manifest(manifest_path)
     predictions_by_crop = load_predictions_by_crop(predictions_path)
+    wholeimage_predictions = load_wholeimage_predictions(wholeimage_predictions_path)
 
-    out_df = build_submission_df(image_files, manifest_by_image, predictions_by_crop)
+    out_df = build_submission_df(image_files, manifest_by_image, predictions_by_crop, wholeimage_predictions)
     errors = validate_submission(out_df, set(image_files))
     if errors:
         raise ValueError(f"submission failed validation: {errors}")
