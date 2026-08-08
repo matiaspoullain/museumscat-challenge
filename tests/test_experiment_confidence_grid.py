@@ -5,19 +5,28 @@ import cv2
 import numpy as np
 import pandas as pd
 
+import src.experiment_confidence_grid as experiment_confidence_grid
 from src.experiment_confidence_grid import enumerate_configs, evaluate_config
 from src.gemini_calibration_features import contributing_crops_by_specimen
+from src.metrics import aurc
 
 
-def test_enumerate_configs_has_sixteen_valid_combinations():
+def test_enumerate_configs_has_eighteen_valid_combinations():
     configs = enumerate_configs()
-    assert len(configs) == 16
+    assert len(configs) == 18
     # every (agreement, feature_set, penalty) triple appears, and calibrator_family
     # is only meaningful (i.e. varies) when feature_set == "scalar"
     scalar_families = {c["calibrator_family"] for c in configs if c["feature_set"] == "scalar"}
     assert scalar_families == {"isotonic", "platt", "shrinkage"}
     multi_families = {c["calibrator_family"] for c in configs if c["feature_set"] == "multi"}
     assert multi_families == {"logistic_multi"}
+    # the new "no fitted calibrator at all" arm: raw confidence, agreement
+    # fixed to "hard", penalty toggled both ways -- 2 new configs total
+    none_configs = [c for c in configs if c["feature_set"] == "none"]
+    assert len(none_configs) == 2
+    assert {c["calibrator_family"] for c in none_configs} == {"raw"}
+    assert {c["agreement"] for c in none_configs} == {"hard"}
+    assert {c["penalty"] for c in none_configs} == {False, True}
 
 
 def _tiny_context(tmp_dir):
@@ -57,3 +66,30 @@ def test_evaluate_config_runs_for_every_combination():
             overall, per_field = evaluate_config(config, context)
             assert 0.0 <= overall <= 1.0
             assert set(per_field) == {"verbatimDate", "verbatimLocality"}
+
+
+def test_evaluate_config_none_feature_set_uses_raw_confidence_without_fitting(monkeypatch):
+    # feature_set == "none" must not call either calibrator-fitting function --
+    # it's the "no fitted calibrator at all" arm, so fitting anything here would
+    # defeat the point. Monkeypatching both to raise proves evaluate_config
+    # never reaches them for this feature_set.
+    def _boom(*args, **kwargs):
+        raise AssertionError("calibrator-fitting function should not be called for feature_set='none'")
+
+    monkeypatch.setattr(experiment_confidence_grid, "oof_calibrated_confidences", _boom)
+    monkeypatch.setattr(experiment_confidence_grid, "oof_multi_feature_calibrated_confidences", _boom)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        context = _tiny_context(tmp_dir)
+        config = {"agreement": "hard", "feature_set": "none", "calibrator_family": "raw", "penalty": False}
+        overall, per_field = evaluate_config(config, context)
+        assert 0.0 <= overall <= 1.0
+
+        # with penalty=False, the confidence values feeding aurc() must be
+        # exactly with_fallback's raw confidence, unchanged
+        with_fallback = experiment_confidence_grid._with_fallback(context["predictions_by_crop"]["hard"], context)
+        errors_by_field = experiment_confidence_grid._errors_by_field(with_fallback, context["ground_truth_df"])
+        for field in ("verbatimDate", "verbatimLocality"):
+            raw_confidences = [with_fallback[image_file][field][1] for image_file in context["image_files"]]
+            expected_aurc = aurc(errors_by_field[field], raw_confidences)
+            assert per_field[field] == expected_aurc

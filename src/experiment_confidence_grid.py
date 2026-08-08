@@ -45,11 +45,24 @@ BASELINE_AURC = 0.075  # src.evaluate_gemini_dev's current best (raw confidence 
 
 def enumerate_configs():
     """Every valid (agreement, feature_set, calibrator_family, penalty)
-    combination: 16 total. calibrator_family only varies when feature_set ==
+    combination: 18 total. calibrator_family only varies when feature_set ==
     "scalar" (isotonic/platt/shrinkage are all 1-D fits over the self-
     consistency scalar); feature_set == "multi" always uses the multi-feature
     logistic regression from src.gemini_calibration_features, so
-    calibrator_family is fixed to "logistic_multi" there instead."""
+    calibrator_family is fixed to "logistic_multi" there instead.
+
+    feature_set == "none" (2 extra configs, agreement fixed to "hard" x
+    penalty in (False, True)) is the "no fitted calibrator at all" arm: raw
+    (post-cleanup-and-fallback) self-consistency confidence used directly,
+    with calibrator_family fixed to "raw" and only the optional coverage
+    penalty layered on top. This is the arm every fitted calibrator config
+    above should be beating, but wasn't in the grid before -- without it the
+    grid can only compare fitted calibrators against each other, not against
+    doing nothing. Fixed at agreement="hard" (not also "soft") since that's
+    the actual production default (see BASELINE_AURC) -- the point of this
+    arm is to reproduce/bracket that baseline and the fitted winner within
+    the same ranked table, not to re-explore the agreement axis, which
+    proposal 1 (soft agreement) already showed doesn't generalize."""
     configs = []
     for agreement in ("hard", "soft"):
         for penalty in (False, True):
@@ -62,6 +75,11 @@ def enumerate_configs():
                 "agreement": agreement, "feature_set": "multi",
                 "calibrator_family": "logistic_multi", "penalty": penalty,
             })
+    for penalty in (False, True):
+        configs.append({
+            "agreement": "hard", "feature_set": "none",
+            "calibrator_family": "raw", "penalty": penalty,
+        })
     return configs
 
 
@@ -116,7 +134,7 @@ def evaluate_config(config, context):
         confidences_by_field = oof_calibrated_confidences(
             with_fallback, ground_truth_df, family=config["calibrator_family"]
         )
-    else:
+    elif config["feature_set"] == "multi":
         rows_by_field = build_feature_rows(
             image_files, with_fallback, context["contributing_crops"], predictions_by_crop_variant,
             images_dir=context["images_dir"],
@@ -126,6 +144,9 @@ def evaluate_config(config, context):
             confidences_by_field[field] = oof_multi_feature_calibrated_confidences(
                 rows_by_field[field], correctness
             )
+    else:  # feature_set == "none" -- no calibrator fit at all, raw confidence as-is
+        for field in FIELD_IS_DATE:
+            confidences_by_field[field] = [with_fallback[image_file][field][1] for image_file in image_files]
 
     if config["penalty"]:
         for field in FIELD_IS_DATE:
