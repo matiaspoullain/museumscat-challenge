@@ -22,6 +22,8 @@ import time
 from google import genai
 from google.genai import types
 
+from src.metrics import ned
+
 # "gemini-2.5-flash" (this project's original choice) returns 404 for new API
 # keys, and "gemini-flash-latest" resolved to "gemini-3.6-flash", whose free
 # tier is only 20 requests/day -- unusably small. The "-lite" variants have
@@ -186,6 +188,25 @@ def self_consistency_scores(samples):
         modal_normalized, modal_count = counts.most_common(1)[0]
         modal_text = next(t for t in texts if _normalize_for_matching(t) == modal_normalized)
         scores[field] = (modal_text, modal_count / len(texts))
+    return scores
+
+
+def soft_consistency_scores(samples):
+    """Like self_consistency_scores, but each field's confidence is the average
+    similarity (1 - normalized edit distance) between every sample and the modal
+    answer, instead of the fraction of samples that match it exactly. A sample
+    that's a one-character OCR slip away from the modal answer ("1897" vs
+    "1887") still counts as partial agreement here, rather than the zero credit
+    self_consistency_scores' exact-match count would give it."""
+    scores = {}
+    for field in FIELDS:
+        texts = [sample[field] for sample in samples]
+        counts = collections.Counter(_normalize_for_matching(t) for t in texts)
+        modal_normalized, _ = counts.most_common(1)[0]
+        modal_text = next(t for t in texts if _normalize_for_matching(t) == modal_normalized)
+        is_date = field == "verbatimDate"
+        similarities = [1.0 - ned(t, modal_text, is_date=is_date) for t in texts]
+        scores[field] = (modal_text, sum(similarities) / len(similarities))
     return scores
 
 

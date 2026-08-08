@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from src.gemini_transcribe import (
     PROMPT,
     WHOLE_IMAGE_PROMPT,
@@ -8,6 +10,7 @@ from src.gemini_transcribe import (
     _parse_response_json,
     call_gemini_once,
     self_consistency_scores,
+    soft_consistency_scores,
     transcribe_card_with_confidence,
 )
 
@@ -123,6 +126,45 @@ def test_self_consistency_scores_all_disagree_is_low_confidence():
     assert scores["verbatimDate"] == ("MISSING", 1.0)
     _, confidence = scores["verbatimLocality"]
     assert confidence == 1 / 3
+
+
+def test_soft_consistency_scores_unanimous_is_full_confidence():
+    samples = [{"verbatimDate": "27.5.2022", "verbatimLocality": "Kb"}] * 3
+    scores = soft_consistency_scores(samples)
+    assert scores["verbatimDate"] == ("27.5.2022", 1.0)
+    assert scores["verbatimLocality"] == ("Kb", 1.0)
+
+
+def test_soft_consistency_scores_gives_partial_credit_for_near_miss():
+    # "Kob" is one edit from the modal "Kb" (ned=1/3 -> similarity=2/3), so the
+    # average similarity across all 3 samples is (1 + 1 + 2/3) / 3 = 8/9 --
+    # strictly higher than self_consistency_scores' exact-match fraction (2/3)
+    # would give the same samples, since that scores "Kob" as zero credit.
+    samples = [
+        {"verbatimDate": "MISSING", "verbatimLocality": "Kb"},
+        {"verbatimDate": "MISSING", "verbatimLocality": "Kb"},
+        {"verbatimDate": "MISSING", "verbatimLocality": "Kob"},
+    ]
+    scores = soft_consistency_scores(samples)
+    text, confidence = scores["verbatimLocality"]
+    assert text == "Kb"
+    assert confidence == pytest.approx(8 / 9)
+
+
+def test_soft_consistency_scores_all_disagree_is_still_above_zero():
+    samples = [
+        {"verbatimDate": "MISSING", "verbatimLocality": "Kb"},
+        {"verbatimDate": "MISSING", "verbatimLocality": "Ti"},
+        {"verbatimDate": "MISSING", "verbatimLocality": "Rude Skov"},
+    ]
+    scores = soft_consistency_scores(samples)
+    _, confidence = scores["verbatimLocality"]
+    # "Kb" vs itself is similarity 1.0; "Ti" shares no characters and gets
+    # similarity 0.0; "Rude Skov" shares 'k' so gets partial similarity.
+    # Average is (1.0 + 0.0 + similarity) / 3, which is above 1/3 due to
+    # partial overlap with "Rude Skov".
+    assert confidence > 1 / 3
+    assert confidence == pytest.approx(0.3703703703703704)
 
 
 def test_transcribe_card_with_confidence_uses_injected_call_fn():
