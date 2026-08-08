@@ -22,26 +22,87 @@ not just the transcription — a confident wrong answer is penalized more than a
 one. Submission columns, exact order:
 `image_file,verbatimDate,verbatimDate_confidence,verbatimLocality,verbatimLocality_confidence`.
 
-## Status: work stopped here (2026-07-30)
+## Status (2026-08-07)
 
-The user decided to stop working on this competition. The full end-to-end pipeline
-(detection → OCR → field classification → multi-card merge → visual relevance filter →
-submission) is built and passes its test suite. Local dev-set numbers (200 labeled
-specimens, see `docs/superpowers/plans/2026-07-29-submission-pipeline.md`'s "Outcome"
-section for the full breakdown):
+**The classical OCR pipeline (detection → doctr → field classification → multi-card
+merge → visual relevance filter, best local AURC 0.576) has been superseded by a
+Gemini VLM per-card transcription pipeline**, which is now the primary approach and
+performs an order of magnitude better. The classical pipeline's code/tests/docs
+(`src/pipeline.py`, `src/classify_field.py`, `src/card_relevance_visual.py`,
+`src/generate_submission.py`, `docs/superpowers/plans/2026-07-29-submission-pipeline.md`
+and earlier) still exist and pass their tests, but aren't the active path — read the
+Gemini-specific docs below for current work, not the classical-pipeline plans.
 
-- Baseline: overall AURC 0.617 (`verbatimDate` 0.536, `verbatimLocality` 0.698).
-- With the visual card-relevance filter (`src/card_relevance_visual.py`, added after the
-  submission-pipeline plan): overall AURC **0.576** (`verbatimDate` 0.538, `verbatimLocality`
-  0.613) — the pipeline's best local result, and what `src/generate_submission.py` uses
-  by default.
+**Current best result:** overall dev-set AURC **0.0715** (`verbatimDate` ≈0.026,
+`verbatimLocality` ≈0.117), from raw self-consistency confidence (no fitted
+calibrator) plus a fixed deterministic coverage penalty. Full history and the
+reasoning behind that specific config: `docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md`
+(read this one first for anything confidence/calibration-related).
 
-`data/processed/submission.csv` (3300 rows, `validate_submission`-clean) was generated
-locally but **never submitted to Kaggle** — `kaggle competitions submit` is a deliberate,
-user-triggered action per this repo's conventions, and work stopped before that step.
-Confidence calibration (isotonic regression, see that same doc's "Deferred" section) is
-the highest-leverage next step if this resumes — both fields' AURC is well above their
-NED, meaning raw confidence is poorly calibrated relative to actual correctness.
+How the pipeline got here, in order:
+1. **Per-card Gemini transcription**: `src/gemini_transcribe.py` sends each
+   already-cropped card image (from the existing SAM-based detection pipeline,
+   `data/processed/card_crops/`) to Gemini, sampled 3x at temperature>0, scored by
+   self-consistency (fraction of samples agreeing) rather than the model's own
+   self-reported confidence. Multi-card merge is unchanged (`src/merge_records.py`).
+   Runners: `src/run_gemini_dev.py` (200 labeled specimens), `src/run_gemini_test.py`
+   (3300-image test set, **not yet run** — gated on the next step).
+2. **Whole-image fallback** (`docs/superpowers/specs/2026-08-07-gemini-wholeimage-fallback-design.md`):
+   for specimens where both fields came back `"MISSING"` after the per-card pass
+   (failed detection, an over-eager confound filter, or a genuinely-missing label),
+   send the original uncropped photo to Gemini instead. Took dev AURC from 0.124
+   (per-card raw confidence alone) to 0.075 (+ cleanup + fallback).
+3. **Confidence-calibration experiments** (`docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md`):
+   tried soft (edit-distance) self-consistency scoring, 1-D recalibration
+   (isotonic/Platt/shrinkage), a 19-feature structural+visual multi-feature
+   calibrator (L2/L1 logistic regression, PCA+random-forest), and a deterministic
+   penalty for specimens with under-covered cards. **Key finding, not just an
+   empirical result but a mathematical one**: AURC (`aurc()` in `src/metrics.py`)
+   depends only on confidence *rank order*, never on absolute values — so any
+   strictly monotonic reshaping of a single scalar (which is all isotonic/Platt/
+   shrinkage do to self-consistency) is structurally incapable of improving it
+   beyond step-function tie-breaking noise. Every 1-D calibrator family lost to
+   raw confidence in every one of the 26 grid configs tried. The fitted models
+   that *do* see more information (multi-feature calibrator, Lasso, PCA+RF) came
+   closer, but their edge over doing nothing was smaller than this 200-row dev
+   set's fold-to-fold variance. **Winner: raw self-consistency confidence +
+   `src/confidence_penalty_rules.py`'s fixed 0.7x penalty when a specimen has an
+   under-covered card — zero fitted parameters, deterministic, AURC 0.0715.**
+
+**Not yet done:** the winning config isn't wired into `src/generate_submission_gemini.py`
+(the actual submission-generation path still needs it applied — see "Next steps").
+Neither `data/processed/submission.csv` (classical pipeline, AURC 0.576, generated but
+never submitted) nor a Gemini-pipeline test-set submission have ever been sent to
+Kaggle — `kaggle competitions submit` is a deliberate, user-triggered action per this
+repo's conventions.
+
+## Next steps (proposed 2026-08-07, none started yet)
+
+1. **Wire the winning confidence config into `src/generate_submission_gemini.py`**:
+   `agreement="hard"` (`self_consistency_scores`, not `soft_consistency_scores`), no
+   fitted calibrator (skip `src.calibrate_gemini_confidence`/`src.gemini_calibration_features`
+   entirely), raw confidence + `src.confidence_penalty_rules.apply_confidence_penalty`.
+   Then re-run `src.evaluate_gemini_dev` (extend it with the penalty step if it
+   doesn't have it yet) to confirm the *actual submission-generation path* — not just
+   `src.experiment_confidence_grid`'s harness — reproduces ~0.0715 dev AURC.
+2. **`verbatimLocality` is now the dominant error source** (~0.117 dev AURC vs.
+   `verbatimDate`'s ~0.026, a ~4.5x gap) and confidence calibration is exhausted as a
+   lever (see Status above — it's provably rank-invariant past a point). Further gains
+   need to come from transcription/matching quality on `verbatimLocality` specifically,
+   not more calibration variants. `src/analyze_gemini_errors.py` (text-diff pattern
+   mining) and `src/analyze_confidence_errors.py` (high-confidence-wrong-case mining)
+   are the existing tools for finding concrete, evidence-backed error patterns before
+   building anything new — this repo's established convention is mining real errors
+   first, not designing fixes speculatively (see `src/clean_gemini_predictions.py`'s
+   docstring for why).
+3. **Once (1) is done and dev numbers hold, run `src/run_gemini_test.py`** on the full
+   3300-image test set — this is where free-tier Gemini quota usage becomes real.
+   `src/gemini_batch_runner.ModelRotation` already handles falling forward across
+   `MODEL_FALLBACK_ORDER` models on daily-quota 429s, and both runners are resumable
+   (`already_done`, flush-per-row) if a run gets interrupted.
+4. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10
+   submissions/day, 2 final, competition ends 2026-08-31. Never call it from a script
+   or without explicit instruction.
 
 ## Repo structure
 
@@ -57,24 +118,36 @@ submodule-per-competition setup).
   `conda run -n museumscat-challenge python src/download_kaggle_data.py`.
 - `kaggle_meta/` — committed. Small text: competition rules/description pages + file listing.
 - `tests/` — pytest, mirrors `src/` module names.
-- `docs/superpowers/plans/` — implementation plans, in chronological/supersession order:
+- `docs/superpowers/plans/` — implementation plans, in chronological/supersession order.
+  Classical pipeline (superseded, see Status above, but still the record of how the
+  card-detection/crop infrastructure the Gemini pipeline reuses was built):
   `2026-07-24-museumscat-ocr-pipeline.md` (original architecture, tasks 6-8 superseded) →
   `2026-07-24-danish-recognizer-finetune.md` (first recognizer fine-tune, superseded — see
   its own status note) → `2026-07-28-card-label-matching-app.md` →
-  `2026-07-29-card-word-boxes-danish-finetune.md` (current recognizer) →
-  `2026-07-29-submission-pipeline.md` — **read this one first**, it's the current
-  end-to-end pipeline (card-crop manifest → per-word OCR → line reconstruction → field
-  classification → multi-card merge → generate submission) and has the final results
-  in its "Outcome" section.
+  `2026-07-29-card-word-boxes-danish-finetune.md` (recognizer, no longer used for
+  transcription itself but `data/processed/card_crops/` still comes from this era's
+  detection work) → `2026-07-29-submission-pipeline.md` (classical end-to-end pipeline,
+  final AURC 0.576 in its "Outcome" section).
+  Current (Gemini VLM) pipeline — **read these for anything active**:
+  `docs/superpowers/specs/2026-08-07-gemini-wholeimage-fallback-design.md` (whole-image
+  fallback design) → `2026-08-07-confidence-calibration-experiments.md` (**read this one
+  first** — confidence calibration experiments and the current recommended config, full
+  "Outcome"/"Addendum" sections with final numbers).
 - `tables_figures/eda/` — EDA outputs (grids, notes). Small/committed unless it's a
   derived-from-raw-images preview, in which case gitignore it.
 
 ## Environment
 
 Conda env `museumscat-challenge` (`environment.yml`): Python 3.11, pandas, numpy, pillow,
-scikit-learn, `kaggle`. OCR/CV libraries (opencv, doctr/easyocr) get added as the plan's
-detection/OCR tasks are implemented — ask before adding, they're non-trivial (torch-based)
-dependencies.
+scikit-learn, `kaggle`, `opencv-python-headless`, `python-doctr[torch]`, `easyocr`,
+`segment-anything` (classical pipeline), and `google-genai` (current Gemini VLM pipeline).
+
+The Gemini runners (`src/run_gemini_dev.py`, `src/run_gemini_test.py`) need
+`GEMINI_API_KEY` in the environment (or `--api-key`) — a free-tier Google AI Studio key,
+not Vertex AI. `src/gemini_transcribe.MODEL_FALLBACK_ORDER` lists the `-flash-lite`
+models tried in order; `src/gemini_batch_runner.ModelRotation` falls forward across them
+on a 429 (daily quota exhausted), since free-tier daily quotas are the scarce resource,
+not money.
 
 Run anything with `conda run -n museumscat-challenge python ...` rather than assuming an
 activated shell.
@@ -82,11 +155,14 @@ activated shell.
 ## Constraints specific to this competition
 
 - CC BY-NC 4.0 data license — non-commercial use only.
-- No paid VLM/LLM APIs in the pipeline for now (decided 2026-07-24). The only key available
-  is Anthropic (Claude Pro subscription, not necessarily API billing) — a possible Phase-2
-  fallback for low-confidence crops only, kept swappable via `src/ocr_labels.py`'s
-  `run_ocr(crop) -> (text, confidence)` interface, not built until the classical pipeline's
-  dev-set numbers say it's needed.
+- **Gemini API quota is the scarce resource for the VLM pipeline** (superseded the
+  original 2026-07-24 "no paid VLM/LLM APIs" decision once dev-set numbers showed it was
+  worth it — see Status above). Free-tier daily quotas, not billing, are the constraint:
+  conserve real API calls (`src/run_gemini_dev.py`/`run_gemini_test.py`) for actual
+  transcription work, not experimentation — confidence-calibration/analysis work should
+  reuse already-collected `raw_samples_json` (`src.calibrate_gemini_confidence.
+  rescored_predictions_by_crop`) instead of re-querying the API. Both Gemini runners are
+  resumable (`already_done`, flush-per-row) if a run gets interrupted by quota exhaustion.
 - 10 submissions/day, 2 final submissions — don't call `kaggle competitions submit` from a
   script; it's a deliberate, quota-costing action the user should trigger explicitly.
 - Competition ends 2026-08-31.
