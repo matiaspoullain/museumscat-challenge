@@ -40,6 +40,7 @@ from src.eda_card_visual_features import (
 
 MANIFEST_PATH = os.path.join("data", "processed", "card_crops", "manifest.csv")
 TRAIN_CSV_PATH = os.path.join("data", "raw", "train.csv")
+TEST_RELEVANCE_CACHE_PATH = os.path.join("data", "processed", "gemini", "test_relevance_flags.csv")
 
 
 def _all_crops_by_specimen(manifest_path):
@@ -122,6 +123,52 @@ def compute_relevance_flags_for_specimens(specimens, model=None, manifest_path=M
     # fail open: an unreadable crop (image_bgr is None) keeps its True default
     # rather than being silently dropped from the relevance-flagged set.
     return {crop_filename: predicted_by_crop.get(crop_filename, True) for crop_filename in crop_filenames}
+
+
+def _load_relevance_cache(cache_path):
+    if not os.path.exists(cache_path):
+        return {}
+    with open(cache_path, encoding="utf-8") as f:
+        return {row["crop_filename"]: row["is_relevant"] == "True" for row in csv.DictReader(f)}
+
+
+def _save_relevance_cache(cache_path, flags):
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["crop_filename", "is_relevant"])
+        writer.writeheader()
+        for crop_filename, is_relevant in flags.items():
+            writer.writerow({"crop_filename": crop_filename, "is_relevant": is_relevant})
+
+
+def load_or_compute_relevance_flags(specimens, cache_path, model=None, manifest_path=MANIFEST_PATH,
+                                     images_dir=IMAGES_DIR, progress_every=500):
+    """Like compute_relevance_flags_for_specimens, but persists the result to
+    cache_path (crop_filename,is_relevant CSV) so a later re-run -- e.g. the
+    next day's src.run_gemini_test invocation, resuming after a daily quota
+    429, or src.run_gemini_test_wholeimage running after it -- can skip the
+    several-minutes feature-extraction pass entirely and just read the file,
+    instead of recomputing it from scratch every single invocation.
+
+    Recomputes (and overwrites the cache) if the cache doesn't cover every
+    crop the given specimens actually have in the manifest right now -- e.g.
+    the very first call, or a manifest that grew since the cache was written.
+    A partial/stale cache is treated the same as no cache: safer to redo the
+    (idempotent) computation than to silently serve incomplete flags."""
+    by_image = _all_crops_by_specimen(manifest_path)
+    needed = {crop_filename for specimen in specimens for crop_filename in by_image.get(specimen, [])}
+
+    cached = _load_relevance_cache(cache_path)
+    if needed <= cached.keys():
+        print(f"[relevance] using cached flags from {cache_path} ({len(needed)} crops)", flush=True)
+        return {crop_filename: cached[crop_filename] for crop_filename in needed}
+
+    print(f"[relevance] cache at {cache_path} missing {len(needed - cached.keys())} of "
+          f"{len(needed)} needed crops -- computing fresh...", flush=True)
+    flags = compute_relevance_flags_for_specimens(specimens, model=model, manifest_path=manifest_path,
+                                                   images_dir=images_dir, progress_every=progress_every)
+    _save_relevance_cache(cache_path, flags)
+    return flags
 
 
 def compute_dev_relevance_flags(dev_specimens):

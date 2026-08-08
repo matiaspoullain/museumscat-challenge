@@ -108,6 +108,10 @@ repo's conventions.
    it refuses to start early (`src.gemini_batch_runner.pending_crop_count` gate) since
    a specimen with untranscribed cards looks identical to a genuinely both-MISSING one,
    and running the fallback on it early would waste quota on a wrong classification.
+   Both scripts get their relevance flags via `src.card_relevance_visual.
+   load_or_compute_relevance_flags`, which caches to `data/processed/gemini/
+   test_relevance_flags.csv` — the ~6-8 minute feature-extraction pass over the
+   test set's ~6500 crops only happens once, not on every resumed daily invocation.
 4. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10
    submissions/day, 2 final, competition ends 2026-08-31. Never call it from a script
    or without explicit instruction.

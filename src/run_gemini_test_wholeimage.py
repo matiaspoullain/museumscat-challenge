@@ -30,7 +30,7 @@ import os
 import pandas as pd
 
 from src.calibrate_gemini_confidence import load_predictions_by_crop, merge_predictions_by_specimen
-from src.card_relevance_visual import compute_relevance_flags_for_specimens
+from src.card_relevance_visual import TEST_RELEVANCE_CACHE_PATH, load_or_compute_relevance_flags
 from src.gemini_batch_runner import pending_crop_count, run_wholeimage_batch
 from src.gemini_transcribe import MODEL_FALLBACK_ORDER
 from src.pipeline import load_manifest
@@ -71,9 +71,8 @@ def main():
     test_specimens = {os.path.splitext(f)[0] for f in test_image_files}
     print(f"[setup] {len(test_specimens)} test specimens loaded", flush=True)
 
-    print("[setup] computing card relevance flags (visual classifier)...", flush=True)
-    relevance_flags = compute_relevance_flags_for_specimens(test_specimens)
-    print(f"[setup] relevance flags computed for {len(relevance_flags)} card crops", flush=True)
+    relevance_flags = load_or_compute_relevance_flags(test_specimens, TEST_RELEVANCE_CACHE_PATH)
+    print(f"[setup] relevance flags ready for {len(relevance_flags)} card crops", flush=True)
 
     n_pending = pending_crop_count(test_image_files, relevance_flags, CARD_PREDICTIONS_PATH,
                                     manifest_path=MANIFEST_PATH)
