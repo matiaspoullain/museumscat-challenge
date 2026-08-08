@@ -10,8 +10,14 @@ import os
 
 import cv2
 import numpy as np
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import KFold
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
-from src.eda_card_visual_features import FEATURE_NAMES, IMAGES_DIR, extract_features
+from src.eda_card_visual_features import FEATURE_NAMES, IMAGES_DIR, N_FOLDS, RANDOM_STATE, extract_features
+from src.metrics import CORRECT_THRESHOLD
 
 FIELDS = ("verbatimDate", "verbatimLocality")
 STRUCTURAL_FEATURE_NAMES = [
@@ -91,3 +97,49 @@ def build_feature_rows(image_files, merged, contributing_crops, predictions_by_c
                 row[name] = visual[name] if visual is not None else float("nan")
             rows[field].append(row)
     return rows
+
+
+def _feature_matrix(rows, feature_order=FEATURE_ORDER):
+    return np.array([[row[name] for name in feature_order] for row in rows], dtype=float)
+
+
+def fit_multi_feature_calibrator(rows, correctness_values, feature_order=FEATURE_ORDER):
+    """L2-regularized logistic regression on feature_order's columns, predicting
+    P(correct). NaN visual features (crops with 0 contributing cards) are mean-
+    imputed inside the pipeline, fit only on the training fold -- leakage-free
+    the same way StandardScaler's fit is."""
+    labels = [1 if (1.0 - c) <= CORRECT_THRESHOLD else 0 for c in correctness_values]
+    if len(set(labels)) < 2:
+        return None
+    pipeline = make_pipeline(
+        SimpleImputer(strategy="mean"), StandardScaler(), LogisticRegression(max_iter=1000)
+    )
+    pipeline.fit(_feature_matrix(rows, feature_order), labels)
+    return pipeline
+
+
+def predict_multi_feature(pipeline, rows, feature_order=FEATURE_ORDER):
+    return list(pipeline.predict_proba(_feature_matrix(rows, feature_order))[:, 1])
+
+
+def oof_multi_feature_calibrated_confidences(rows, correctness_values, n_folds=N_FOLDS, random_state=RANDOM_STATE):
+    calibrated = [None] * len(rows)
+    kf = KFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+    for train_idx, test_idx in kf.split(rows):
+        train_rows = [rows[i] for i in train_idx]
+        train_correctness = [correctness_values[i] for i in train_idx]
+        test_rows = [rows[i] for i in test_idx]
+        pipeline = fit_multi_feature_calibrator(train_rows, train_correctness)
+        if pipeline is None:
+            # degenerate fold (every training label the same) -- predict the
+            # observed correct-rate for every held-out row, same fallback
+            # _ConstantCalibrator gives the 1-D "platt" family
+            fallback_rate = sum(
+                1 for c in train_correctness if (1.0 - c) <= CORRECT_THRESHOLD
+            ) / len(train_correctness)
+            predictions = [fallback_rate] * len(test_rows)
+        else:
+            predictions = predict_multi_feature(pipeline, test_rows)
+        for i, p in zip(test_idx, predictions):
+            calibrated[i] = float(p)
+    return calibrated

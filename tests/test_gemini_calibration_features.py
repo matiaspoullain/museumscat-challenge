@@ -9,6 +9,9 @@ from src.gemini_calibration_features import (
     FEATURE_ORDER,
     build_feature_rows,
     contributing_crops_by_specimen,
+    fit_multi_feature_calibrator,
+    oof_multi_feature_calibrated_confidences,
+    predict_multi_feature,
 )
 
 
@@ -94,3 +97,46 @@ def test_feature_order_starts_with_self_consistency():
         ["text_length", "n_cards", "cross_card_agreement", "from_wholeimage_fallback", "has_visual_features"]
         + FEATURE_NAMES
     )
+
+
+def _synthetic_rows(n=20):
+    # self_consistency and correctness move together (with noise from n_cards)
+    # so a fitted logistic regression has real signal to learn, not just noise
+    rows = []
+    correctness = []
+    for i in range(n):
+        confident = i % 2 == 0
+        row = {name: 0.0 for name in FEATURE_ORDER}
+        row["self_consistency"] = 0.95 if confident else 0.4
+        row["n_cards"] = 1.0
+        row["cross_card_agreement"] = 0.5
+        row["has_visual_features"] = 0.0
+        for name in FEATURE_NAMES:
+            row[name] = float("nan")
+        rows.append(row)
+        correctness.append(1.0 if confident else 0.2)
+    return rows, correctness
+
+
+def test_fit_multi_feature_calibrator_predicts_higher_confidence_for_higher_self_consistency():
+    rows, correctness = _synthetic_rows()
+    pipeline = fit_multi_feature_calibrator(rows, correctness)
+    assert pipeline is not None
+    high_row = dict(rows[0])   # self_consistency=0.95 case
+    low_row = dict(rows[1])    # self_consistency=0.4 case
+    predictions = predict_multi_feature(pipeline, [high_row, low_row])
+    assert predictions[0] > predictions[1]
+    assert all(0.0 <= p <= 1.0 for p in predictions)
+
+
+def test_fit_multi_feature_calibrator_degenerate_labels_returns_none():
+    rows, _ = _synthetic_rows(n=4)
+    all_correct = [1.0, 1.0, 1.0, 1.0]  # binarizes to a single class -- no boundary to fit
+    assert fit_multi_feature_calibrator(rows, all_correct) is None
+
+
+def test_oof_multi_feature_calibrated_confidences_covers_every_row():
+    rows, correctness = _synthetic_rows()
+    result = oof_multi_feature_calibrated_confidences(rows, correctness, n_folds=4, random_state=0)
+    assert len(result) == len(rows)
+    assert all(v is not None and 0.0 <= v <= 1.0 for v in result)
