@@ -83,20 +83,45 @@ def _predict_crop(model, crop_filename):
     return bool(model.predict(x)[0])
 
 
-def compute_relevance_flags_for_specimens(specimens, model=None):
+def compute_relevance_flags_for_specimens(specimens, model=None, manifest_path=MANIFEST_PATH,
+                                           images_dir=IMAGES_DIR, progress_every=500):
     """crop_filename -> bool for every card crop belonging to `specimens`
     (specimen ids, no extension), all predicted fresh by `model` (trained via
     train_full_model() if not given). Meant for specimens with no relevance
     labels at all (e.g. the test set) -- for the 200 train.csv specimens, use
-    compute_dev_relevance_flags instead to avoid leakage on the labeled ones."""
+    compute_dev_relevance_flags instead to avoid leakage on the labeled ones.
+
+    Feature extraction (one cv2.imread + extract_features call per crop) is
+    unavoidable and dominates the wall-clock cost -- on the ~6500-crop test
+    set this step alone takes several minutes with no other output otherwise,
+    which previously looked hung (observed 2026-08-08). progress_every prints
+    a line periodically so it doesn't look stuck; pass 0/None to disable.
+    model.predict is called once on the whole batch instead of once per crop
+    -- RandomForestClassifier.predict's fixed per-call overhead adds up
+    at this scale (measured ~9ms/crop one-by-one vs ~0.2ms/crop batched)."""
     if model is None:
         model = train_full_model()
-    by_image = _all_crops_by_specimen(MANIFEST_PATH)
-    return {
-        crop_filename: _predict_crop(model, crop_filename)
-        for specimen in specimens
-        for crop_filename in by_image.get(specimen, [])
-    }
+    by_image = _all_crops_by_specimen(manifest_path)
+    crop_filenames = [crop_filename for specimen in specimens for crop_filename in by_image.get(specimen, [])]
+    total = len(crop_filenames)
+
+    features_by_crop = {}
+    for i, crop_filename in enumerate(crop_filenames, start=1):
+        image_bgr = cv2.imread(os.path.join(images_dir, crop_filename))
+        if image_bgr is not None:
+            features_by_crop[crop_filename] = extract_features(image_bgr)
+        if progress_every and i % progress_every == 0:
+            print(f"[relevance] extracted features for {i}/{total} crops...", flush=True)
+
+    predicted_by_crop = {}
+    if features_by_crop:
+        x = _feature_matrix(list(features_by_crop.values()))
+        predictions = model.predict(x)
+        predicted_by_crop = dict(zip(features_by_crop.keys(), (bool(p) for p in predictions)))
+
+    # fail open: an unreadable crop (image_bgr is None) keeps its True default
+    # rather than being silently dropped from the relevance-flagged set.
+    return {crop_filename: predicted_by_crop.get(crop_filename, True) for crop_filename in crop_filenames}
 
 
 def compute_dev_relevance_flags(dev_specimens):
