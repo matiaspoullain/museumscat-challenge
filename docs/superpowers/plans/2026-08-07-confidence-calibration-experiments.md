@@ -1622,6 +1622,72 @@ from consideration either way; production should keep `agreement="hard"` and
 never needs `family="platt"`/`"shrinkage"`/`"logistic_multi"` for this
 pipeline under this recommendation.
 
+## Addendum (2026-08-07): Lasso and PCA+random-forest arms
+
+Follow-up to the final review's finding that the multi-feature calibrator's
+19 raw features are likely too many for ~200 dev rows. Two more ways to fight
+that, both added to `src.gemini_calibration_features` and wired into the same
+grid harness (`enumerate_configs()` now varies `calibrator_family` over 3
+options for `feature_set="multi"` too, 26 configs total):
+
+- **L1 (Lasso) logistic regression** (`fit_multi_feature_calibrator(...,
+  regularization="l1")`) — feature selection (zeroes out uninformative
+  coefficients) instead of L2's shrink-everything-toward-zero.
+- **PCA + random forest** (`fit_pca_rf_calibrator`/
+  `oof_pca_rf_calibrated_confidences`) — collapses the 19 features to 5
+  principal components (fixed, not tuned — same posture as `_SHRINKAGE_ALPHA`),
+  then a nonlinear model on the reduced representation. t-SNE was considered
+  and rejected: scikit-learn's `TSNE` has no `.transform()` for new data, so it
+  can't be fit on a training fold and applied to a held-out fold without
+  leakage — unusable inside this plan's OOF-evaluation discipline.
+
+Full 26-row ranked table (`conda run -n museumscat-challenge python -m src.experiment_confidence_grid`, top 12 shown, full run in git history):
+
+```
+overall_aurc   date_aurc   locality_aurc  config
+      0.0702      0.0265          0.1138  agreement=hard feature_set=multi  family=logistic_multi_l2 penalty=True
+      0.0710      0.0248          0.1172  agreement=hard feature_set=multi  family=logistic_multi_l2 penalty=False
+      0.0715      0.0258          0.1172  agreement=hard feature_set=none   family=raw            penalty=True
+      0.0743      0.0306          0.1179  agreement=hard feature_set=multi  family=logistic_multi_l1 penalty=True
+      0.0751      0.0293          0.1210  agreement=hard feature_set=none   family=raw            penalty=False
+      0.0759      0.0285          0.1234  agreement=hard feature_set=multi  family=logistic_multi_l1 penalty=False
+      0.0764      0.0282          0.1246  agreement=soft feature_set=multi  family=logistic_multi_l2 penalty=True
+      0.0781      0.0270          0.1292  agreement=soft feature_set=multi  family=logistic_multi_l2 penalty=False
+      0.0844      0.0296          0.1393  agreement=hard feature_set=scalar family=isotonic       penalty=True
+      0.0851      0.0314          0.1388  agreement=soft feature_set=multi  family=logistic_multi_l1 penalty=True
+      ...
+      0.0882      0.0288          0.1476  agreement=soft feature_set=multi  family=pca_rf         penalty=True
+      0.0901      0.0272          0.1530  agreement=hard feature_set=multi  family=pca_rf         penalty=True
+```
+
+**Neither new arm changes the recommendation — if anything, both reinforce it.**
+
+- **Lasso (0.0743 best) is worse than both L2 (0.0702) and raw+penalty
+  (0.0715).** Sparsity alone doesn't fix the small-sample problem here — L1's
+  feature selection is itself a fit on the same ~160 training rows/fold, so
+  it's exposed to the same fold-to-fold instability the final review already
+  found for L2 (never re-swept across seeds for L1, but there's no reason to
+  expect it's more stable when it scores worse at the one seed tested).
+- **PCA+RF is the worst fitted arm in the whole grid (best: 0.0882), clearly
+  behind every logistic-regression variant and roughly tied with the weaker
+  scalar families (isotonic/shrinkage).** Two likely reasons, both anticipated
+  in `fit_pca_rf_calibrator`'s docstring: PCA is unsupervised, so its top
+  components (by variance) aren't guaranteed to be the ones that predict
+  correctness — with 13 of the 19 features being pixel-statistic visual
+  features that likely covary strongly with each other (texture and tint
+  metrics measuring related things), PCA's top components may mostly capture
+  *visual-feature* variance while diluting `self_consistency`'s much stronger
+  signal into a minor component. A random forest on top adds further
+  overfitting risk on the same small training folds, compounding rather than
+  fixing the problem a more complex model was meant to solve.
+
+This confirms the addendum's motivating question empirically rather than just
+by argument: **going more complex (PCA+RF) or more sparse (Lasso) than plain
+L2 logistic regression does not help at this dev set's size — it's worse in
+both directions tried.** The revised recommendation from the section above
+stands unchanged: `agreement="hard"` + `feature_set="none"` (raw confidence)
++ the coverage penalty, not any fitted calibrator.
+
 ## What this plan deliberately doesn't do
 
 Wiring the winning configuration into `src.generate_submission_gemini` (the
