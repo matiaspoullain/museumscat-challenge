@@ -172,6 +172,49 @@ def test_save_and_load_calibrators_roundtrip():
             assert original == restored
 
 
+def test_fit_calibrators_platt_family_stays_in_unit_range():
+    merged, ground_truth_df = _synthetic_dev_set()
+    calibrators = fit_calibrators(merged, ground_truth_df, family="platt")
+    for calibrator in calibrators.values():
+        for raw in (0.0, 0.3, 0.7, 1.0):
+            calibrated = calibrator.predict([raw])[0]
+            assert 0.0 <= calibrated <= 1.0
+
+
+def test_fit_calibrators_shrinkage_blends_toward_raw_score():
+    merged, ground_truth_df = _synthetic_dev_set()
+    isotonic_calibrators = fit_calibrators(merged, ground_truth_df, family="isotonic")
+    shrinkage_calibrators = fit_calibrators(merged, ground_truth_df, family="shrinkage")
+    raw = 0.2
+    isotonic_pred = isotonic_calibrators["verbatimLocality"].predict([raw])[0]
+    shrinkage_pred = shrinkage_calibrators["verbatimLocality"].predict([raw])[0]
+    expected = 0.5 * isotonic_pred + 0.5 * raw
+    assert abs(shrinkage_pred - expected) < 1e-9
+
+
+def test_fit_calibrators_platt_handles_all_correct_fold_without_crashing():
+    # every prediction exactly right -- the binarized label is all-1s, which a
+    # real LogisticRegression can't fit a decision boundary for
+    merged = {
+        "a.jpeg": {"verbatimDate": ("1.7.2000", 0.9), "verbatimLocality": ("Kb", 0.9)},
+        "b.jpeg": {"verbatimDate": ("1.7.2000", 0.8), "verbatimLocality": ("Kb", 0.8)},
+    }
+    ground_truth_df = pd.DataFrame([
+        {"image_file": "a.jpeg", "verbatimDate": "1.7.2000", "verbatimLocality": "Kb"},
+        {"image_file": "b.jpeg", "verbatimDate": "1.7.2000", "verbatimLocality": "Kb"},
+    ])
+    calibrators = fit_calibrators(merged, ground_truth_df, family="platt")
+    assert calibrators["verbatimLocality"].predict([0.5])[0] == 1.0
+
+
+def test_oof_calibrated_confidences_platt_family_covers_every_specimen():
+    merged, ground_truth_df = _synthetic_dev_set()
+    result = oof_calibrated_confidences(merged, ground_truth_df, family="platt")
+    for values in result.values():
+        assert len(values) == len(ground_truth_df)
+        assert all(v is not None and 0.0 <= v <= 1.0 for v in values)
+
+
 def test_rescored_predictions_by_crop_matches_direct_scorer_call():
     samples = [
         {"verbatimDate": "1.7.2000", "verbatimLocality": "Kb"},

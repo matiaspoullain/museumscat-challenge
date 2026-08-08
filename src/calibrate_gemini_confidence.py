@@ -19,13 +19,15 @@ import json
 import os
 
 import joblib
+import numpy as np
 import pandas as pd
 from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import KFold
 
 from src.eda_card_visual_features import N_FOLDS, RANDOM_STATE
 from src.merge_records import assemble_field
-from src.metrics import best_pipe_ned
+from src.metrics import CORRECT_THRESHOLD, best_pipe_ned
 from src.pipeline import load_manifest
 
 DEV_PREDICTIONS_PATH = os.path.join("data", "processed", "gemini", "dev_card_predictions.csv")
@@ -141,19 +143,76 @@ def _confidences_and_correctness(merged, ground_truth_df):
     return by_field
 
 
-def fit_calibrators(merged, ground_truth_df):
-    by_field = _confidences_and_correctness(merged, ground_truth_df)
-    calibrators = {}
-    for field, data in by_field.items():
+# Blend weight toward the fitted isotonic curve for the "shrinkage" family;
+# fixed rather than tuned -- oof_calibrated_confidences already showed plain
+# isotonic (equivalent to alpha=1.0) can hurt AURC on this dev set's 200 rows,
+# so a fixed halfway blend toward the raw score is a deliberately simple middle
+# ground to test, not a fitted hyperparameter.
+_SHRINKAGE_ALPHA = 0.5
+
+
+class _ShrinkageCalibrator:
+    def __init__(self, isotonic, alpha=_SHRINKAGE_ALPHA):
+        self.isotonic = isotonic
+        self.alpha = alpha
+
+    def predict(self, x):
+        x = np.asarray(x, dtype=float)
+        return self.alpha * self.isotonic.predict(x) + (1 - self.alpha) * x
+
+
+class _PlattWrapper:
+    def __init__(self, logistic):
+        self.logistic = logistic
+
+    def predict(self, x):
+        x = np.asarray(x, dtype=float).reshape(-1, 1)
+        return self.logistic.predict_proba(x)[:, 1]
+
+
+class _ConstantCalibrator:
+    """Fallback for a degenerate fold (every label the same) where
+    LogisticRegression has no decision boundary to fit -- predicts the
+    observed correct-rate for every input."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def predict(self, x):
+        return np.full(len(np.asarray(x).reshape(-1)), self.value)
+
+
+def _fit_1d_calibrator(confidences, correctness, family):
+    if family == "isotonic":
         calibrator = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
-        calibrator.fit(data["confidences"], data["correctness"])
-        calibrators[field] = calibrator
-    return calibrators
+        calibrator.fit(confidences, correctness)
+        return calibrator
+    if family == "platt":
+        labels = [1 if (1.0 - c) <= CORRECT_THRESHOLD else 0 for c in correctness]
+        if len(set(labels)) < 2:
+            return _ConstantCalibrator(sum(labels) / len(labels))
+        x = np.asarray(confidences, dtype=float).reshape(-1, 1)
+        logistic = LogisticRegression()
+        logistic.fit(x, labels)
+        return _PlattWrapper(logistic)
+    if family == "shrinkage":
+        isotonic = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+        isotonic.fit(confidences, correctness)
+        return _ShrinkageCalibrator(isotonic)
+    raise ValueError(f"unknown calibrator family: {family!r}")
 
 
-def oof_calibrated_confidences(merged, ground_truth_df):
-    """5-fold out-of-fold isotonic-calibrated confidence per field, for an
-    honest (leakage-free) dev-set AURC estimate."""
+def fit_calibrators(merged, ground_truth_df, family="isotonic"):
+    by_field = _confidences_and_correctness(merged, ground_truth_df)
+    return {
+        field: _fit_1d_calibrator(data["confidences"], data["correctness"], family)
+        for field, data in by_field.items()
+    }
+
+
+def oof_calibrated_confidences(merged, ground_truth_df, family="isotonic"):
+    """5-fold out-of-fold calibrated confidence per field, for an honest
+    (leakage-free) dev-set AURC estimate."""
     by_field = _confidences_and_correctness(merged, ground_truth_df)
     result = {}
     for field, data in by_field.items():
@@ -161,8 +220,9 @@ def oof_calibrated_confidences(merged, ground_truth_df):
         calibrated = [None] * len(confidences)
         kf = KFold(n_splits=N_FOLDS, shuffle=True, random_state=RANDOM_STATE)
         for train_idx, test_idx in kf.split(confidences):
-            calibrator = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
-            calibrator.fit([confidences[i] for i in train_idx], [correctness[i] for i in train_idx])
+            calibrator = _fit_1d_calibrator(
+                [confidences[i] for i in train_idx], [correctness[i] for i in train_idx], family
+            )
             for i in test_idx:
                 calibrated[i] = float(calibrator.predict([confidences[i]])[0])
         result[field] = calibrated
