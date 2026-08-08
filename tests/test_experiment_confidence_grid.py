@@ -11,15 +11,15 @@ from src.gemini_calibration_features import contributing_crops_by_specimen
 from src.metrics import aurc
 
 
-def test_enumerate_configs_has_eighteen_valid_combinations():
+def test_enumerate_configs_has_twenty_six_valid_combinations():
     configs = enumerate_configs()
-    assert len(configs) == 18
+    assert len(configs) == 26
     # every (agreement, feature_set, penalty) triple appears, and calibrator_family
-    # is only meaningful (i.e. varies) when feature_set == "scalar"
+    # varies over 3 options for both "scalar" and "multi" feature sets
     scalar_families = {c["calibrator_family"] for c in configs if c["feature_set"] == "scalar"}
     assert scalar_families == {"isotonic", "platt", "shrinkage"}
     multi_families = {c["calibrator_family"] for c in configs if c["feature_set"] == "multi"}
-    assert multi_families == {"logistic_multi"}
+    assert multi_families == {"logistic_multi_l2", "logistic_multi_l1", "pca_rf"}
     # the new "no fitted calibrator at all" arm: raw confidence, agreement
     # fixed to "hard", penalty toggled both ways -- 2 new configs total
     none_configs = [c for c in configs if c["feature_set"] == "none"]

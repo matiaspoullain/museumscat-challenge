@@ -29,6 +29,7 @@ from src.gemini_calibration_features import (
     build_feature_rows,
     contributing_crops_by_specimen,
     oof_multi_feature_calibrated_confidences,
+    oof_pca_rf_calibrated_confidences,
 )
 from src.gemini_transcribe import self_consistency_scores, soft_consistency_scores
 from src.metrics import aurc, best_pipe_ned
@@ -40,16 +41,23 @@ DEV_PREDICTIONS_PATH = os.path.join("data", "processed", "gemini", "dev_card_pre
 FIELD_IS_DATE = {"verbatimDate": True, "verbatimLocality": False}
 SCORERS = {"hard": self_consistency_scores, "soft": soft_consistency_scores}
 SCALAR_CALIBRATOR_FAMILIES = ("isotonic", "platt", "shrinkage")
+# "logistic_multi_l2"/"logistic_multi_l1" both fit on all 19 raw FEATURE_ORDER
+# columns (L2 shrinks every coefficient, L1/Lasso zeroes out uninformative
+# ones); "pca_rf" instead cuts dimensionality first (PCA to 5 components) and
+# fits a random forest on the reduced representation -- a nonlinear model on
+# fewer, decorrelated inputs, as a second answer to "19 features is too many
+# for ~200 dev rows" alongside L1's linear feature-selection answer.
+MULTI_CALIBRATOR_FAMILIES = ("logistic_multi_l2", "logistic_multi_l1", "pca_rf")
 BASELINE_AURC = 0.075  # src.evaluate_gemini_dev's current best (raw confidence + cleanup + fallback)
 
 
 def enumerate_configs():
     """Every valid (agreement, feature_set, calibrator_family, penalty)
-    combination: 18 total. calibrator_family only varies when feature_set ==
-    "scalar" (isotonic/platt/shrinkage are all 1-D fits over the self-
-    consistency scalar); feature_set == "multi" always uses the multi-feature
-    logistic regression from src.gemini_calibration_features, so
-    calibrator_family is fixed to "logistic_multi" there instead.
+    combination: 26 total. calibrator_family varies over
+    SCALAR_CALIBRATOR_FAMILIES (3) when feature_set == "scalar" (all 1-D fits
+    over the self-consistency scalar), or MULTI_CALIBRATOR_FAMILIES (3) when
+    feature_set == "multi" -- 2 agreements x (3 scalar + 3 multi) x 2
+    penalties = 24, plus the 2 feature_set == "none" configs below = 26.
 
     feature_set == "none" (2 extra configs, agreement fixed to "hard" x
     penalty in (False, True)) is the "no fitted calibrator at all" arm: raw
@@ -71,10 +79,11 @@ def enumerate_configs():
                     "agreement": agreement, "feature_set": "scalar",
                     "calibrator_family": family, "penalty": penalty,
                 })
-            configs.append({
-                "agreement": agreement, "feature_set": "multi",
-                "calibrator_family": "logistic_multi", "penalty": penalty,
-            })
+            for family in MULTI_CALIBRATOR_FAMILIES:
+                configs.append({
+                    "agreement": agreement, "feature_set": "multi",
+                    "calibrator_family": family, "penalty": penalty,
+                })
     for penalty in (False, True):
         configs.append({
             "agreement": "hard", "feature_set": "none",
@@ -141,9 +150,15 @@ def evaluate_config(config, context):
         )
         for field in FIELD_IS_DATE:
             correctness = [1.0 - e for e in errors_by_field[field]]
-            confidences_by_field[field] = oof_multi_feature_calibrated_confidences(
-                rows_by_field[field], correctness
-            )
+            if config["calibrator_family"] == "pca_rf":
+                confidences_by_field[field] = oof_pca_rf_calibrated_confidences(
+                    rows_by_field[field], correctness
+                )
+            else:
+                regularization = "l1" if config["calibrator_family"] == "logistic_multi_l1" else "l2"
+                confidences_by_field[field] = oof_multi_feature_calibrated_confidences(
+                    rows_by_field[field], correctness, regularization=regularization
+                )
     else:  # feature_set == "none" -- no calibrator fit at all, raw confidence as-is
         for field in FIELD_IS_DATE:
             confidences_by_field[field] = [with_fallback[image_file][field][1] for image_file in image_files]
