@@ -179,6 +179,14 @@ this via `HttpOptions.timeout`, so httpx cancels a stuck request instead of
 blocking the batch run indefinitely; `_call_with_fallback` retries the same
 model on the resulting `httpx.TimeoutException`/`ConnectError`.
 
+Gemini also occasionally returns a transient `google.genai.errors.ServerError`
+(503 UNAVAILABLE, "Unable to process input image" -- observed intermittently
+during the test-set run, 2026-08-09). This isn't a quota signal, so
+`_call_with_fallback` doesn't advance `ModelRotation` for it -- it backs off
+`src.gemini_batch_runner.SERVER_ERROR_BACKOFF_SECONDS` (5s) and retries the
+same model, same as the timeout/connect-error case above but with a short
+pause first since Gemini's own error message says to retry.
+
 Run anything with `conda run -n museumscat-challenge python ...` rather than assuming an
 activated shell.
 

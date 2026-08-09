@@ -23,6 +23,10 @@ def _client_error(code):
     return genai_errors.ClientError(code, {"error": {"message": "boom"}}, response=None)
 
 
+def _server_error(code=503, message="Unable to process input image."):
+    return genai_errors.ServerError(code, {"error": {"message": message}}, response=None)
+
+
 def _quota_client_error(quota_id=None, message="boom"):
     """A 429 shaped like a real Gemini free-tier response: a structured
     google.rpc.QuotaFailure detail carrying the quotaId that distinguishes a
@@ -294,3 +298,18 @@ def test_call_with_fallback_retries_same_model_on_connect_error():
     assert result["_model"] == "a"
     assert client.models.calls == ["a", "a"]
     assert rotation.current == "a"
+
+
+def test_call_with_fallback_retries_same_model_on_server_error(monkeypatch):
+    slept = []
+    monkeypatch.setattr("src.gemini_batch_runner.time.sleep", lambda seconds: slept.append(seconds))
+
+    client = _FlakyClient([_server_error(), _SUCCESS_TEXT])
+    rotation = ModelRotation(["a", "b"])
+
+    result = _call_with_fallback(client, b"fake-bytes", rotation, rate_limiter=None)
+
+    assert result["_model"] == "a"
+    assert client.models.calls == ["a", "a"]
+    assert rotation.current == "a"
+    assert slept == [5]

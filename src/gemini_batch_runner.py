@@ -31,6 +31,13 @@ from src.pipeline import load_manifest
 # should mostly prevent this from happening at all.
 RPM_BACKOFF_SECONDS = 60
 
+# How long to back off before retrying the same model after a 5xx
+# ServerError (observed 2026-08-09: intermittent "503 UNAVAILABLE / Unable
+# to process input image", which Gemini's own error message says to retry).
+# Much shorter than RPM_BACKOFF_SECONDS since this isn't a quota limit --
+# just a transient server-side hiccup.
+SERVER_ERROR_BACKOFF_SECONDS = 5
+
 MANIFEST_PATH = os.path.join("data", "processed", "card_crops", "manifest.csv")
 CROPS_IMAGES_DIR = os.path.join("data", "processed", "card_crops", "images")
 WHOLEIMAGE_IMAGES_DIR = os.path.join("data", "raw", "images")
@@ -197,7 +204,11 @@ def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, promp
     out of quota for the day. A hung request (src.gemini_transcribe.
     REQUEST_TIMEOUT_MS exceeded, or a transport-level connect failure) is
     also just retried on the same model, after build_client's own
-    retry_options budget is exhausted -- it's not a quota signal at all."""
+    retry_options budget is exhausted -- it's not a quota signal at all. A
+    5xx ServerError (e.g. intermittent "503 UNAVAILABLE / Unable to process
+    input image") is likewise transient and not a quota signal, so it's
+    retried on the same model too, after a short SERVER_ERROR_BACKOFF_SECONDS
+    pause."""
     while True:
         model = model_rotation.current
         try:
@@ -207,6 +218,11 @@ def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, promp
         except (httpx.TimeoutException, httpx.ConnectError):
             print(f"[timeout] {model} request stalled past the retry budget -- "
                   "cancelling and retrying the same model...", flush=True)
+            continue
+        except genai_errors.ServerError as e:
+            print(f"[server-error] {model} returned {e.code} ({e.message}) -- backing off "
+                  f"{SERVER_ERROR_BACKOFF_SECONDS}s and retrying the same model...", flush=True)
+            time.sleep(SERVER_ERROR_BACKOFF_SECONDS)
             continue
         except genai_errors.ClientError as e:
             if not is_quota_exhausted(e):
