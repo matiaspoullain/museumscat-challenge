@@ -164,6 +164,14 @@ def is_daily_quota_exhausted(error):
     return False
 
 
+class AllModelsExhaustedError(Exception):
+    """Raised by _call_with_fallback when every model in the rotation has hit
+    its free-tier daily quota -- distinct from a bare ClientError so
+    run_batch/run_wholeimage_batch can stop the batch cleanly (rows already
+    written are flushed per-row, so nothing is lost) instead of letting an
+    unhandled traceback crash the whole run."""
+
+
 class ModelRotation:
     """Tries models in order (most capable first) and falls forward -- never
     back -- to the next one once the current model's free-tier DAILY quota is
@@ -230,7 +238,7 @@ def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, promp
             if is_daily_quota_exhausted(e):
                 if model_rotation.advance():
                     continue
-                raise
+                raise AllModelsExhaustedError(str(e)) from e
             print(f"[rate-limit] {model} hit a per-minute 429 -- backing off "
                   f"{RPM_BACKOFF_SECONDS}s and retrying the same model (not switching)...",
                   flush=True)
@@ -289,7 +297,13 @@ def run_batch(image_files, relevance_flags, output_path, n_samples, rpm, limit, 
             def call_fn(image_bytes=image_bytes):
                 return _call_with_fallback(client, image_bytes, model_rotation, rate_limiter)
 
-            scores, samples = transcribe_card_with_confidence(n_samples=n_samples, call_fn=call_fn)
+            try:
+                scores, samples = transcribe_card_with_confidence(n_samples=n_samples, call_fn=call_fn)
+            except AllModelsExhaustedError:
+                print(f"[done] every model in the rotation hit its daily quota after "
+                      f"{i - 1}/{len(pending)} crops this run -- stopping here, resume by "
+                      "rerunning later", flush=True)
+                return
             models_used = sorted({sample.get("_model", "") for sample in samples} - {""})
             row = {
                 "crop_filename": crop_filename,
@@ -361,7 +375,13 @@ def run_wholeimage_batch(image_files, merged_predictions, output_path, n_samples
                 return _call_with_fallback(client, image_bytes, model_rotation, rate_limiter,
                                             prompt=WHOLE_IMAGE_PROMPT)
 
-            scores, samples = transcribe_card_with_confidence(n_samples=n_samples, call_fn=call_fn)
+            try:
+                scores, samples = transcribe_card_with_confidence(n_samples=n_samples, call_fn=call_fn)
+            except AllModelsExhaustedError:
+                print(f"[done] every model in the rotation hit its daily quota after "
+                      f"{i - 1}/{len(pending)} specimens this run -- stopping here, resume by "
+                      "rerunning later", flush=True)
+                return
             models_used = sorted({sample.get("_model", "") for sample in samples} - {""})
             row = {
                 "source_image_file": source_image_file,

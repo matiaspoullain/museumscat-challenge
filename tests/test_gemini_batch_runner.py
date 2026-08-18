@@ -8,6 +8,7 @@ from google.genai import errors as genai_errors
 
 from src.gemini_batch_runner import (
     MAX_SAFE_RPM,
+    AllModelsExhaustedError,
     ModelRotation,
     _call_with_fallback,
     _validate_rpm,
@@ -267,6 +268,15 @@ def test_call_with_fallback_advances_model_on_daily_429():
     assert result["_model"] == "b"
     assert client.models.calls == ["a", "b"]
     assert rotation.current == "b"
+
+
+def test_call_with_fallback_raises_all_models_exhausted_when_last_model_hits_daily_quota():
+    daily_error = _quota_client_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    client = _FlakyClient([daily_error])
+    rotation = ModelRotation(["a"])
+
+    with pytest.raises(AllModelsExhaustedError):
+        _call_with_fallback(client, b"fake-bytes", rotation, rate_limiter=None)
 
 
 def test_call_with_fallback_reraises_non_quota_errors():
