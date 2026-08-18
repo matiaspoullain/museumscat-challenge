@@ -72,12 +72,12 @@ How the pipeline got here, in order:
    `src/confidence_penalty_rules.py`'s fixed 0.7x penalty when a specimen has an
    under-covered card — zero fitted parameters, deterministic, AURC 0.0715.**
 
-**Not yet done:** the winning config isn't wired into `src/generate_submission_gemini.py`
-(the actual submission-generation path still needs it applied — see "Next steps").
-Neither `data/processed/submission.csv` (classical pipeline, AURC 0.576, generated but
-never submitted) nor a Gemini-pipeline test-set submission have ever been sent to
-Kaggle — `kaggle competitions submit` is a deliberate, user-triggered action per this
-repo's conventions.
+The winning config is wired into `src/generate_submission_gemini.py` (was already done
+2026-08-08, re-verified 2026-08-18 — see "Next steps"), and `data/processed/
+submission_gemini.csv` (3300 rows, full test set) has been generated as of 2026-08-18.
+**Submitted to Kaggle 2026-08-18 (user-triggered): public leaderboard AURC 0.06007**
+(vs. the classical pipeline's `data/processed/submission.csv`, submitted 2026-07-30,
+public AURC 0.60501) — Kaggle submission ref `55607015`.
 
 ## Status (2026-08-18): test-set transcription complete
 
@@ -92,8 +92,8 @@ parallel on Kaggle (see "Kaggle quota-source infrastructure" below):
   test_wholeimage_predictions.csv`.
 
 Both files are complete and gitignored (`data/processed/`) — they exist only on this
-machine (and as dataset versions on Kaggle, see below). **Not yet done:** merging these
-into a submission. See "Next steps" below.
+machine (and as dataset versions on Kaggle, see below). Merged into a submission on
+2026-08-18. See "Next steps" below.
 
 ### Bug fixed this session: `AllModelsExhaustedError`
 
@@ -184,21 +184,31 @@ Datasets (all owner `matiaspoullain`) feeding them:
 
 ## Next steps (updated 2026-08-18)
 
-1. **Wire the winning confidence config into `src/generate_submission_gemini.py`**:
-   `agreement="hard"` (`self_consistency_scores`, not `soft_consistency_scores`), no
-   fitted calibrator (skip `src.calibrate_gemini_confidence`/`src.gemini_calibration_features`
-   entirely), raw confidence + `src.confidence_penalty_rules.apply_confidence_penalty`.
-   Then re-run `src.evaluate_gemini_dev` (extend it with the penalty step if it
-   doesn't have it yet) to confirm the *actual submission-generation path* — not just
-   `src.experiment_confidence_grid`'s harness — reproduces ~0.0715 dev AURC. This step
-   was never started (see the 2026-08-07 Status section above for the calibration
-   research that led to this recommended config).
-2. **Generate the actual test-set submission** now that both `data/processed/gemini/
-   test_card_predictions.csv` (3267/3267) and `test_wholeimage_predictions.csv`
-   (1041/1041) are complete — this is new since 2026-08-07, when neither existed yet.
-   Run `src/merge_records.py`-style merge + `src/generate_submission_gemini.py` (once
-   step 1 is done) to produce `data/processed/submission_gemini.csv`, matching the
-   exact column order from this file's top ("The task" section).
+1. ~~Wire the winning confidence config into `src/generate_submission_gemini.py`~~
+   **DONE — was actually already wired back on 2026-08-08** (commits `7bd3f36`
+   "add deterministic confidence penalty for incomplete multi-card coverage" and
+   `953f781` "wire coverage-penalty confidence into the Gemini submission pipeline"),
+   before this "Next steps" section was last written — the "never started" claim above
+   was stale. `src/generate_submission_gemini.py` already uses raw self-consistency
+   confidence (no calibrator), whole-image fallback, and
+   `src.confidence_penalty_rules.apply_confidence_penalty`. Re-verified 2026-08-18:
+   `conda run -n museumscat-challenge python -m src.evaluate_gemini_dev`'s
+   "production config" line reproduces overall dev AURC **0.071**
+   (verbatimDate 0.026, verbatimLocality 0.117), matching the 2026-08-07 result.
+2. **Generate the actual test-set submission** — **DONE 2026-08-18.**
+   `data/processed/gemini/test_card_predictions.csv` (3267/3267, verified no
+   duplicate `crop_filename`) and `test_wholeimage_predictions.csv` (1041/1041,
+   verified no duplicate `source_image_file`) were complete, so
+   `conda run -n museumscat-challenge python -m src.generate_submission_gemini` was
+   run directly (it already does the merge internally via
+   `src.calibrate_gemini_confidence.merge_predictions_by_specimen` +
+   `apply_wholeimage_fallback`). Output: `data/processed/submission_gemini.csv`,
+   3300 rows, exact required column order, 0 image_files missing/extra vs
+   `data/raw/test.csv`, 0 null confidences. `verbatimDate` MISSING in 31.0% of rows,
+   `verbatimLocality` MISSING in 15.9%; confidence range 0.233–1.000 both fields.
+   **Submitted to Kaggle 2026-08-18 (user-triggered)** — public AURC **0.06007**
+   (submission ref `55607015`), vs. the classical pipeline's 0.60501. 9 of 10
+   daily submissions remained after this one.
 3. **`verbatimLocality` is still the dominant error source** (~0.117 dev AURC vs.
    `verbatimDate`'s ~0.026, a ~4.5x gap as of 2026-08-07) and confidence calibration is
    exhausted as a lever (rank-invariant past a point, see 2026-08-07 Status). Further
@@ -211,8 +221,10 @@ Datasets (all owner `matiaspoullain`) feeding them:
    ground truth to score against there.
 4. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10
    submissions/day, 2 final, competition ends 2026-08-31. Never call it from a script
-   or without explicit instruction. Neither the classical pipeline's `submission.csv`
-   nor a Gemini-pipeline submission has ever been sent to Kaggle as of 2026-08-18.
+   or without explicit instruction. As of 2026-08-18, both the classical pipeline's
+   `submission.csv` (0.60501) and the Gemini pipeline's `submission_gemini.csv`
+   (0.06007) have been submitted; **neither has been marked as one of the 2 final
+   submissions yet** — that's a separate, irreversible action on Kaggle's side.
 
 ## Repo structure
 
