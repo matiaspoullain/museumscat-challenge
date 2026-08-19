@@ -182,6 +182,39 @@ Datasets (all owner `matiaspoullain`) feeding them:
     that for the actual data-producing run once the kernel exists and its `GEMINI_API_KEY`
     secret is set (secrets are per-kernel, not shared, and can't be pushed via the API).
 
+## Status (2026-08-19): local VLM second-opinion spike — not adopted
+
+Explored whether a genuinely independent model — Qwen2.5-VL-7B-Instruct,
+4-bit quantized, run entirely on Kaggle's free T4x2 GPU, no Gemini quota spent
+— could serve as a second confidence "vote" alongside Gemini's self-consistency
+(whose 3 samples come from one model, so its errors are correlated with each
+other). Full writeup: `docs/superpowers/plans/2026-08-19-local-vlm-second-opinion-spike.md`.
+Branch `spike/kaggle-vlm-second-opinion` (kept for reference, not merged).
+
+**Result: the correlation is real but doesn't translate into a usable AURC
+improvement.** At full dev-set scale (124 single-card + 71 whole-image
+specimens — bigger than the 30-crop pilot that first suggested this was
+promising), the local VLM's confidence is consistently informative about
+whether *Gemini* is correct (Spearman -0.17 to -0.24 across both fields/both
+passes) — genuinely mined error cases confirm this isn't noise (19 concrete
+cases where the local VLM caught a real Gemini mistake: handwritten digit
+misreads, the exact æ/ø-vs-ö confusion the prompt already warns against,
+short 1-3-letter locality abbreviations Gemini discarded as `MISSING`). But
+five different ways of combining the two confidences (unconditional 50/50
+blend, `min()`, an æøå-triggered text-level swap, blending only where Gemini
+isn't already at max confidence, blending only where Gemini is at its
+*minimum* confidence) each either lost to Gemini's own confidence alone or
+matched it — never beat it. The unconditional blend was actively harmful in
+whole-image `verbatimLocality` (AURC 0.079 → 0.146, nearly doubling) because
+most of its damage came from overriding rows where Gemini was already
+maximally confident and already correct.
+
+Not integrated anywhere in `src/`. If revisited, the working (resumable,
+subprocess-isolated) Kaggle pipeline could cheaply re-run against the full
+3300-image test set, or a *fitted* (not hand-picked) combiner could be tried
+against the already-collected `raw_samples_json` — see the doc's "Outcome"
+section for specifics. Neither is currently planned.
+
 ## Next steps (updated 2026-08-18)
 
 1. ~~Wire the winning confidence config into `src/generate_submission_gemini.py`~~
@@ -254,7 +287,11 @@ submodule-per-competition setup).
   `docs/superpowers/specs/2026-08-07-gemini-wholeimage-fallback-design.md` (whole-image
   fallback design) → `2026-08-07-confidence-calibration-experiments.md` (**read this one
   first** — confidence calibration experiments and the current recommended config, full
-  "Outcome"/"Addendum" sections with final numbers).
+  "Outcome"/"Addendum" sections with final numbers) →
+  `2026-08-19-local-vlm-second-opinion-spike.md` (local Qwen2.5-VL-7B on Kaggle GPU as an
+  independent second confidence signal — not adopted, see its "Outcome"; kept as a record
+  of a real-but-unusable correlation and the Kaggle multi-GPU debugging journey to get
+  there, on branch `spike/kaggle-vlm-second-opinion`).
 - `tables_figures/eda/` — EDA outputs (grids, notes). Small/committed unless it's a
   derived-from-raw-images preview, in which case gitignore it.
 
