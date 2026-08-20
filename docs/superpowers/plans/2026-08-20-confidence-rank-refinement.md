@@ -127,24 +127,38 @@ verified through the real production code path: **dev AURC 0.0575 → 0.0493**
 (verbatimDate CI [−0.0089,−0.0009], clean; verbatimLocality CI [−0.0285,+0.0054], directionally
 strong but not as clean — partial 152/197 coverage dilutes both effect and bootstrap power).
 
-**Test-set extension launched 2026-08-20, user-cancelled same day — paused, not abandoned.**
-(User-authorized, no Gemini quota — a second, independent model on Kaggle's free T4 GPU):
-dataset `matiaspoullain/museumscat-vlm-test-subset` (3,267 test card crops, reusing the
-existing `matiaspoullain/museumscat-card-crops` image dataset), kernel
+**Test-set extension launched 2026-08-20, user-cancelled same day, then resumed same day at a
+cheaper sampling config.** (User-authorized, no Gemini quota — a second, independent model on
+Kaggle's free T4 GPU): dataset `matiaspoullain/museumscat-vlm-test-subset` (3,267 test card
+crops, reusing the existing `matiaspoullain/museumscat-card-crops` image dataset), kernel
 `matiaspoullain/museumscat-vlm-test-set-run` (copy of the dev pilot's
 `notebooks/kaggle_local_vlm_spike.ipynb`, same subprocess-isolated/sub-batched/resumable design
 that took 9 debug iterations to get right — see the spike doc's Outcome). Whole-image scope
 excluded (the original spike's whole-image half never actually ran, 0 rows collected — no
 validated mechanism to extend). At 3,267 items × 10 samples on a single T4x2, this turned out
 to be a multi-day effort in practice too, not just in projection: after ~10h the run had only
-reached 293/1633 items (~29 items/hr — the "1,633" item count reflects the notebook's
-sub-batching, not the raw 3,267 crop count). User cancelled it 2026-08-20 rather than block on
-a multi-day background job. The 293 items processed are preserved in the Kaggle progress
-dataset (`kaggle_vlm_test_subset_dataset`), so nothing already computed is lost — this is
-paused, resumable, and not currently planned rather than a dead end. If revisited: either
-resume across several shorter sessions, or scope down to only Gemini's top confidence tier
-(where the A3 dev-set signal's gradient is strongest, 5x for `verbatimLocality`) instead of
-the full item population.
+reached 565/3267 items across both GPUs combined (~29 items/hr/GPU). User cancelled it
+2026-08-20 rather than block on a multi-day background job.
+
+Before relaunching, `src.analyze_local_vlm_sample_count` (new, zero GPU) asked whether the
+10-sample self-consistency vote was actually necessary: `src.local_vlm_signal.
+local_vlm_agreement_score` only ever reads a crop's majority-vote *text*, never Qwen's own
+self-consistency confidence, so re-deriving that majority vote from the first N of each of the
+152 dev crops' already-collected 10 raw samples is a valid zero-cost proxy for "how few samples
+do we need". Result: the agree/disagree NED gradient is already ~fully present at n_samples=1
+for `verbatimDate` (0.005 vs 0.037, unchanged all the way through n=10) and still large for
+`verbatimLocality` (0.039 vs 0.151 at n=1, vs 0.039 vs 0.202 at n=10 — smaller but real; more
+samples help a little for the noisier field but aren't required for the signal to exist).
+User chose **`N_SAMPLES=1`, greedy decoding (`do_sample=False`)** over the more conservative
+`N_SAMPLES=3` option — a ~10x per-item cost cut, turning the multi-day job into a
+single-session one. The 565 already-collected 10-sample items (272+293 across the two GPUs,
+zero overlap) were downloaded, merged into `previous_card_results.csv`, and re-uploaded to
+`museumscat-vlm-test-subset` so the resumed run only spends GPU time on the ~2,700 remaining
+pending crops; those 565 keep their original 10 samples rather than being redone (harmless and
+strictly better, since `self_consistency_scores` works on any sample-list length). Notebook's
+`kernel-metadata.json` `id` was also fixed (`museumscat-vlm-test-run` → the kernel's actual
+resolved slug `museumscat-vlm-test-set-run`) after a `409 Conflict` push error surfaced the
+mismatch. Re-pushed and running as of 2026-08-20.
 
 ### Submission candidates
 

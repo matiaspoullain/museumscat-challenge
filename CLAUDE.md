@@ -41,15 +41,26 @@ ranking changed. Public delta (0.06007 → 0.05073, −15.6%) confirms the dev-s
 `docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md` (base pipeline) and
 `docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md` (Track A).
 
-**Track A3 (local-VLM within-tier signal) — paused, not abandoned.** Would take dev AURC
-0.0575 → 0.0493 once extended to the full test set, but the Kaggle T4 GPU run
-(`matiaspoullain/museumscat-vlm-test-set-run`) was user-cancelled 2026-08-20 after ~10h at
-293/1633 items — at that rate (~29 items/hr) full completion was multi-day and not worth
-blocking on. Partial progress (293 items) is preserved in the Kaggle progress dataset via the
-usual round-trip pattern (see "Kaggle quota-source infrastructure" below) and can be resumed
-in shorter sessions later, or scoped down (e.g. only re-rank within Gemini's top confidence
-tier, where the signal's gradient is strongest) rather than run to full completion. Not
-currently planned; revisit if there's appetite for another multi-day background GPU job.
+**Track A3 (local-VLM within-tier signal) — resumed 2026-08-20 with a cheaper sampling
+config.** Would take dev AURC 0.0575 → 0.0493 once extended to the full test set. The first
+Kaggle T4 GPU attempt (`matiaspoullain/museumscat-vlm-test-set-run`) was user-cancelled after
+~10h at ~565/3267 items (both GPUs combined; ~29 items/hr/GPU) — at that rate full completion
+was multi-day. Before relaunching, `src.analyze_local_vlm_sample_count` (zero GPU, re-derives
+the majority vote from the 10 raw samples already collected for 152 dev crops, truncated to
+1/3/5/10) confirmed the within-tier agree/disagree NED gradient
+`src.local_vlm_signal.local_vlm_agreement_score` actually consumes — which only ever reads the
+majority-vote *text*, never Qwen's self-consistency confidence — is already ~fully present at
+n_samples=1 for `verbatimDate` (0.005 vs 0.037, unchanged through n=10) and still large for
+`verbatimLocality` (0.039 vs 0.151 at n=1, vs 0.039 vs 0.202 at n=10 — smaller but real).
+**Relaunched with `N_SAMPLES=1`, greedy decoding (`do_sample=False`, no temperature)** instead
+of 10 stochastic samples at temperature 0.7 — a ~10x per-item cost cut, turning a multi-day job
+into a single-session one. The 565 already-collected 10-sample items were downloaded from the
+cancelled run (272+293 across the two GPUs, zero overlap), merged into
+`previous_card_results.csv`, and re-uploaded to the `museumscat-vlm-test-subset` dataset so the
+resumed run only spends GPU time on the ~2,700 remaining pending crops — those 565 keep their
+original 10 samples (harmless; `self_consistency_scores` works on any sample-list length, and
+having more samples for that subset only helps). Kernel re-pushed and running as of 2026-08-20
+(status tracked via `kaggle kernels status matiaspoullain/museumscat-vlm-test-set-run`).
 
 How the pipeline got here, in order:
 1. **Per-card Gemini transcription**: `src/gemini_transcribe.py` sends each
