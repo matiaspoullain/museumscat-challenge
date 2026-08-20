@@ -215,7 +215,7 @@ subprocess-isolated) Kaggle pipeline could cheaply re-run against the full
 against the already-collected `raw_samples_json` — see the doc's "Outcome"
 section for specifics. Neither is currently planned.
 
-## Status (2026-08-20): partial-MISSING whole-image fallback spike — not merged
+## Status (2026-08-20): partial-MISSING whole-image fallback spike — closed, not merged
 
 Explored extending the whole-image fallback (which today only fires when a
 specimen has *both* fields `MISSING` after the per-card pass) to specimens
@@ -224,30 +224,50 @@ writeup: `docs/superpowers/plans/2026-08-19-partial-missing-wholeimage-
 fallback-spike.md`. Branch `experiment/wholeimage-partial-missing` (kept
 for reference, not merged).
 
-**Result: dev-set and test-set MISSING-rate signals were positive, but the
-real Kaggle submission got worse.** Dev-set AURC improved 0.0715 → 0.069
-(4/4 genuine per-card misses recovered correctly on a 24-slot sample, 0
+**Result: dev-set and test-set MISSING-rate signals were positive, but two
+different confidence designs both made the real Kaggle submission worse —
+progressively worse, in fact.** Dev-set AURC improved 0.0715 → 0.069 (4/4
+genuine per-card misses recovered correctly on a 24-slot sample, 0
 hallucinations). At full test-set scale, `verbatimLocality` recovered
-47/50 (94%) of its missing slots, `verbatimDate` only 11/464 (2.4%) —
-consistent with most missing dates being genuinely absent rather than
-per-card misses. Wired into `src.generate_submission_gemini` and
-submitted to Kaggle 2026-08-20: **public AURC regressed 0.06007 → 0.06105**
-(submission ref `55636785`), despite the reduced MISSING rates. Diffing
-old vs. new submissions confirmed only the expected 58 rows changed (no
-collateral bug); manually checking 6 of those 58 against the actual
-specimen photos found 5 exact matches and 1 partially-right-at-lower-
-confidence, no hallucinations — inconclusive on whether the public-score
-regression is real (the public leaderboard is a sample, not the full
-test set, and final standing is decided by the private leaderboard) or a
-genuine quality problem invisible to dev-set/spot-check-scale review.
+47/50 (94%) of its missing slots, `verbatimDate` only 11/464 (2.4%).
 
-**Decision: not merged.** The only end-to-end signal that matters (an
-actual Kaggle submission) got worse, which outweighs the dev-set result
-and the clean-looking spot check. `data/processed/submission_gemini.csv`
-(0.06007, submission ref `55607015`) remains the best known submission.
-If revisited: the private leaderboard score (visible after the
-competition ends 2026-08-31) would help settle whether the regression was
-noise.
+1. **Hard-override design** (whole-image's own confidence taken outright):
+   submitted 2026-08-20, **public AURC 0.06007 → 0.06105** (ref
+   `55636785`). Diffing old vs. new submissions confirmed only the
+   expected 58 rows changed (no collateral bug); manually checking 6 of
+   those 58 against the actual specimen photos found 5 exact matches and
+   1 partially-right-at-lower-confidence, no hallucinations.
+2. **Pooled design** (whole-image's raw samples pooled with the
+   specimen's card crops' raw samples, discarding "MISSING" samples
+   before voting instead of taking whole-image's 3-sample confidence
+   alone — architecturally sounder, since a crop's MISSING answers "no
+   text in this crop", not "no text on the specimen"): initial dev-set
+   evaluation on the 24-slot subset in isolation suggested a large
+   improvement (AURC 0.0281 → 0.0166), but that measurement was flawed —
+   AURC is a global rank metric, and a subset scored alone doesn't
+   reflect how those predictions rank once embedded in the full
+   submission. Re-measured correctly against the complete 200-row dev
+   set: negligible difference (0.06922 → 0.06925, +0.00004). Submitted
+   anyway to confirm empirically: **public AURC got worse again, by
+   more — 0.06105 → 0.06263** (ref `55637181`).
+
+Two submissions regressing in the same direction (1.6%, then 4.3% relative
+vs. the 0.06007 baseline) rules out public-leaderboard sampling noise as
+the likely sole explanation — something about this fallback (in both
+confidence designs tried) hurts the real submission for reasons the
+dev-set signal and a 6-sample manual photo audit didn't surface. Plausible
+mechanism, not confirmed: the pooled design recovers *more* non-MISSING
+values than the hard override (`verbatimLocality` MISSING 477 → 474 — it
+can override cases where whole-image's own 3-sample majority was itself
+MISSING), taking on more opportunities to be wrong exactly where AURC
+penalizes hardest.
+
+**Decision: closed, not merged, not pursued further.**
+`data/processed/submission_gemini.csv` (0.06007, submission ref
+`55607015`) remains the best known submission. The ~1542 Gemini calls'
+raw transcriptions (with full `raw_samples_json`) are archived to a
+dedicated Kaggle private dataset, `matiaspoullain/museumscat-partial-
+wholeimage-archive`, in case this is revisited without re-spending quota.
 
 ## Next steps (updated 2026-08-18)
 
