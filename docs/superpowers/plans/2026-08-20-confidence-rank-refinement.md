@@ -160,6 +160,17 @@ strictly better, since `self_consistency_scores` works on any sample-list length
 resolved slug `museumscat-vlm-test-set-run`) after a `409 Conflict` push error surfaced the
 mismatch. Re-pushed and running as of 2026-08-20.
 
+**Completed same day.** The greedy-n=1 relaunch finished in a single ~5.5h session (19,913s
+per the kernel log) — no multi-day/multi-session work needed, matching the ~10x cost-cut
+projection. **3,267/3,267 card crops covered.** Output downloaded, staged at
+`data/processed/gemini/test_local_vlm_card_predictions.csv`, and fed into
+`python -m src.generate_submission_gemini --local-vlm-predictions-path
+data/processed/gemini/test_local_vlm_card_predictions.csv` to produce
+`submission_gemini_rank_refined_local_vlm.csv` — validated clean (0 errors, text
+byte-identical to the base submission, confidence changed in 1408/3300 date and 2339/3300
+locality rows vs. the Track A-only candidate, now with full test-set coverage instead of
+dev's partial 152/197).
+
 ### Submission candidates
 
 `data/processed/submission_gemini_rank_refined.csv` — A1+A2 only, generated via
@@ -172,8 +183,14 @@ AURC 0.05073** (ref `55648362`), down from the prior best 0.06007 (ref `55607015
 dev-set gain held on the real leaderboard at a similar relative magnitude (−15.6% public vs
 −19.6% dev). Now the best submitted result.
 
-A third candidate (`submission_gemini_rank_refined_local_vlm.csv`, A1+A2+A3) would need the
-paused Kaggle test-set run above to complete or be rescoped; not pursued further this session.
+`submission_gemini_rank_refined_local_vlm.csv` (A1+A2+A3) — the third candidate, generated once
+the greedy-n=1 test-set run above completed. **Submitted to Kaggle 2026-08-20: public AURC
+0.04423** (ref `55654639`), down from 0.05073 — a −12.8% delta closely matching the −14.3%
+dev-set delta, despite A3's dev evaluation only having partial 152/197 crop coverage and a
+noisier `verbatimLocality` bootstrap CI than A1+A2 had. Now the best submitted result.
+
+Full submission chain this round: `submission_gemini.csv` 0.06007 → `submission_gemini_rank_refined.csv`
+(Track A) 0.05073 → `submission_gemini_rank_refined_local_vlm.csv` (Track A3) **0.04423**.
 
 ## Track B — evaluated, NOT adopted
 

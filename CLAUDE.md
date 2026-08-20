@@ -33,34 +33,42 @@ performs an order of magnitude better. The classical pipeline's code/tests/docs
 and earlier) still exist and pass their tests, but aren't the active path — read the
 Gemini-specific docs below for current work, not the classical-pipeline plans.
 
-**Current best *submitted* result:** public Kaggle AURC **0.05073** (`submission_gemini_rank_refined.csv`,
-ref `55648362`, submitted 2026-08-20), Track A confidence rank refinement — text byte-identical
-to the prior best (`submission_gemini.csv`, ref `55607015`, 0.06007), only the confidence
-ranking changed. Public delta (0.06007 → 0.05073, −15.6%) confirms the dev-set signal
-(0.0715 → 0.0575, −19.6%) held on the real leaderboard. Full history and reasoning:
-`docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md` (base pipeline) and
-`docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md` (Track A).
+**Current best *submitted* result:** public Kaggle AURC **0.04423** (
+`submission_gemini_rank_refined_local_vlm.csv`, ref `55654639`, submitted 2026-08-20), Track A3
+(rank refinement + local-VLM within-tier agreement) — text byte-identical to every earlier
+submission this round, only the confidence ranking changed further. Full submission history:
+`submission.csv` (classical pipeline) 0.60501 → `submission_gemini.csv` 0.06007 →
+`submission_gemini_rank_refined.csv` (Track A) 0.05073 → `submission_gemini_rank_refined_local_vlm.csv`
+(Track A3) **0.04423**. Each step's public delta confirmed its dev-set signal held on the real
+leaderboard (Track A: 0.06007→0.05073 public vs 0.0715→0.0575 dev; Track A3: 0.05073→0.04423
+public, −12.8%, vs 0.0575→0.0493 dev, −14.3% — close, despite Track A3's dev evaluation only
+having partial 152/197 crop coverage and a noisier `verbatimLocality` bootstrap CI). Full
+history and reasoning: `docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md`
+(base pipeline) and `docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md` (Track A
+and A3).
 
-**Track A3 (local-VLM within-tier signal) — resumed 2026-08-20 with a cheaper sampling
-config.** Would take dev AURC 0.0575 → 0.0493 once extended to the full test set. The first
-Kaggle T4 GPU attempt (`matiaspoullain/museumscat-vlm-test-set-run`) was user-cancelled after
-~10h at ~565/3267 items (both GPUs combined; ~29 items/hr/GPU) — at that rate full completion
-was multi-day. Before relaunching, `src.analyze_local_vlm_sample_count` (zero GPU, re-derives
-the majority vote from the 10 raw samples already collected for 152 dev crops, truncated to
-1/3/5/10) confirmed the within-tier agree/disagree NED gradient
+**Track A3 test-set extension — complete.** The first Kaggle T4 GPU attempt
+(`matiaspoullain/museumscat-vlm-test-set-run`) was user-cancelled after ~10h at ~565/3267 items
+(both GPUs combined, 10 stochastic samples/item at temperature 0.7; ~29 items/hr/GPU) — at that
+rate full completion was multi-day. Before relaunching, `src.analyze_local_vlm_sample_count`
+(zero GPU, re-derives the majority vote from the 10 raw samples already collected for 152 dev
+crops, truncated to 1/3/5/10) confirmed the within-tier agree/disagree NED gradient
 `src.local_vlm_signal.local_vlm_agreement_score` actually consumes — which only ever reads the
 majority-vote *text*, never Qwen's self-consistency confidence — is already ~fully present at
 n_samples=1 for `verbatimDate` (0.005 vs 0.037, unchanged through n=10) and still large for
 `verbatimLocality` (0.039 vs 0.151 at n=1, vs 0.039 vs 0.202 at n=10 — smaller but real).
-**Relaunched with `N_SAMPLES=1`, greedy decoding (`do_sample=False`, no temperature)** instead
-of 10 stochastic samples at temperature 0.7 — a ~10x per-item cost cut, turning a multi-day job
-into a single-session one. The 565 already-collected 10-sample items were downloaded from the
-cancelled run (272+293 across the two GPUs, zero overlap), merged into
-`previous_card_results.csv`, and re-uploaded to the `museumscat-vlm-test-subset` dataset so the
-resumed run only spends GPU time on the ~2,700 remaining pending crops — those 565 keep their
-original 10 samples (harmless; `self_consistency_scores` works on any sample-list length, and
-having more samples for that subset only helps). Kernel re-pushed and running as of 2026-08-20
-(status tracked via `kaggle kernels status matiaspoullain/museumscat-vlm-test-set-run`).
+Relaunched with `N_SAMPLES=1`, greedy decoding (`do_sample=False`, no temperature) instead of
+10 stochastic samples — the 565 already-collected 10-sample items were rescued (downloaded,
+merged, re-uploaded as resume state; kept as-is rather than redone, since more samples for that
+subset only helps) and the remaining ~2,700 pending crops ran at the new setting. **Finished in
+a single ~5.5h session** (19,913s per the kernel log), matching the projected 1/10th-cost
+estimate: **3,267/3,267 card crops covered**, staged locally at
+`data/processed/gemini/test_local_vlm_card_predictions.csv`. Generated via
+`python -m src.generate_submission_gemini --local-vlm-predictions-path
+data/processed/gemini/test_local_vlm_card_predictions.csv`, validated (0 errors, text
+byte-identical to the base submission, confidence changed in 1408/3300 date and 2339/3300
+locality rows vs. the Track A-only candidate), and submitted — see result above. Nothing left
+pending on this track.
 
 How the pipeline got here, in order:
 1. **Per-card Gemini transcription**: `src/gemini_transcribe.py` sends each
@@ -292,7 +300,7 @@ raw transcriptions (with full `raw_samples_json`) are archived to a
 dedicated Kaggle private dataset, `matiaspoullain/museumscat-partial-
 wholeimage-archive`, in case this is revisited without re-spending quota.
 
-## Status (2026-08-20): confidence rank refinement (Track A) — shipped, dev AURC 0.0715 → 0.0575/0.0493
+## Status (2026-08-20): confidence rank refinement (Track A + A3) — shipped, public AURC 0.06007 → 0.04423
 
 Full writeup: `docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md`. Branch
 `experiment/confidence-rank-refinement`.
@@ -338,21 +346,26 @@ from the prior best 0.06007 (ref `55607015`) — confirms the dev-set gain (0.07
 held on the real leaderboard, at a very similar relative magnitude (−15.6% public vs −19.6%
 dev). This is now the best submitted result.
 
-**A3 test-set extension: launched 2026-08-20, user-cancelled same day — paused, not
-abandoned.** Dataset `matiaspoullain/museumscat-vlm-test-subset` (3,267 test card crops) +
-kernel `matiaspoullain/museumscat-vlm-test-set-run` (copy of the dev pilot's resumable/
-subprocess-isolated notebook) were set up and the run was started (zero Gemini quota, T4x2
-GPU). After ~10h it had reached only 293/1633 items (~29 items/hr) — full completion at that
-rate was multi-day, the same shape as the original Gemini test-set run but without the
-Gemini-side justification of "the whole submission depends on this." User cancelled the run
-2026-08-20 rather than block on it. The 293 items processed so far are preserved in the
-Kaggle progress dataset (`kaggle_vlm_test_subset_dataset`) via the usual round-trip pattern —
-not lost, just paused. **Not currently planned, but explicitly a candidate for a future
-session**: options if revisited are (a) resume in several shorter sessions across days,
-(b) scope down to only re-rank within Gemini's top confidence tier specifically (where A3's
-measured dev-set gradient is strongest — 5x for `verbatimLocality`), rather than the full
-1,633-item population. Once/if local-VLM test-set data exists, generate the third candidate
-via `python -m src.generate_submission_gemini --local-vlm-predictions-path <downloaded CSV>`.
+**A3 test-set extension — complete, submitted, and now the best result.** First attempt
+(dataset `matiaspoullain/museumscat-vlm-test-subset`, kernel
+`matiaspoullain/museumscat-vlm-test-set-run`, 10 stochastic samples/item at temperature 0.7)
+was user-cancelled after ~10h at ~565/3267 items (~29 items/hr/GPU) — full completion at that
+rate was multi-day. Before relaunching, `src.analyze_local_vlm_sample_count` (new, zero GPU)
+re-derived the majority vote from the 152 already-collected dev crops' raw samples truncated to
+1/3/5/10, and found the agree/disagree NED gradient `src.local_vlm_signal.
+local_vlm_agreement_score` actually consumes (only the majority-vote *text*, never Qwen's own
+self-consistency confidence) is already ~fully present at n_samples=1 for `verbatimDate` (0.005
+vs 0.037, unchanged through n=10) and still large for `verbatimLocality` (0.039 vs 0.151 at
+n=1, vs 0.039 vs 0.202 at n=10). User chose **`N_SAMPLES=1`, greedy decoding**
+(`do_sample=False`) over a more conservative `N_SAMPLES=3` — a ~10x per-item cost cut. The 565
+already-collected 10-sample items were rescued (downloaded from the cancelled run, merged,
+re-uploaded as resume state) so the relaunch only spent GPU time on the ~2,700 remaining
+crops. **Finished in a single ~5.5h session, 3,267/3,267 covered** — no multi-day/multi-session
+work needed after all. Generated the third candidate
+(`submission_gemini_rank_refined_local_vlm.csv`), validated clean, and **submitted to Kaggle
+2026-08-20 (user-triggered): public AURC 0.04423** (ref `55654639`), down from 0.05073 — a
+−12.8% delta closely matching the −14.3% dev-set delta despite A3's dev evaluation only having
+partial crop coverage. This is now the best submitted result; nothing left pending on Track A3.
 
 **Track B (text/NED reduction via MBR sample selection, HTML-entity decoding, corpus-based
 locality snapping — `src/consensus_text.py`) was built, tested, and evaluated but NOT adopted.**
