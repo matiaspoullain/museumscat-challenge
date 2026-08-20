@@ -127,18 +127,24 @@ verified through the real production code path: **dev AURC 0.0575 → 0.0493**
 (verbatimDate CI [−0.0089,−0.0009], clean; verbatimLocality CI [−0.0285,+0.0054], directionally
 strong but not as clean — partial 152/197 coverage dilutes both effect and bootstrap power).
 
-**Test-set extension launched 2026-08-20** (user-authorized, no Gemini quota — a second,
-independent model on Kaggle's free T4 GPU): dataset `matiaspoullain/museumscat-vlm-test-subset`
-(3,267 test card crops, reusing the existing `matiaspoullain/museumscat-card-crops` image
-dataset), kernel `matiaspoullain/museumscat-vlm-test-set-run` (copy of the dev pilot's
+**Test-set extension launched 2026-08-20, user-cancelled same day — paused, not abandoned.**
+(User-authorized, no Gemini quota — a second, independent model on Kaggle's free T4 GPU):
+dataset `matiaspoullain/museumscat-vlm-test-subset` (3,267 test card crops, reusing the
+existing `matiaspoullain/museumscat-card-crops` image dataset), kernel
+`matiaspoullain/museumscat-vlm-test-set-run` (copy of the dev pilot's
 `notebooks/kaggle_local_vlm_spike.ipynb`, same subprocess-isolated/sub-batched/resumable design
 that took 9 debug iterations to get right — see the spike doc's Outcome). Whole-image scope
 excluded (the original spike's whole-image half never actually ran, 0 rows collected — no
-validated mechanism to extend). At 3,267 items × 10 samples on a single T4x2, this is realistically
-a multi-day, multi-session effort (the same shape as the main Gemini test-set run, which took
-"multiple days" combining local + a second Kaggle quota source) — status tracked in CLAUDE.md,
-not expected to finish same-day. Uses the same progress-dataset round-trip pattern as the Gemini
-kernels: re-upload `previous_card_results.csv` before each resumed run.
+validated mechanism to extend). At 3,267 items × 10 samples on a single T4x2, this turned out
+to be a multi-day effort in practice too, not just in projection: after ~10h the run had only
+reached 293/1633 items (~29 items/hr — the "1,633" item count reflects the notebook's
+sub-batching, not the raw 3,267 crop count). User cancelled it 2026-08-20 rather than block on
+a multi-day background job. The 293 items processed are preserved in the Kaggle progress
+dataset (`kaggle_vlm_test_subset_dataset`), so nothing already computed is lost — this is
+paused, resumable, and not currently planned rather than a dead end. If revisited: either
+resume across several shorter sessions, or scope down to only Gemini's top confidence tier
+(where the A3 dev-set signal's gradient is strongest, 5x for `verbatimLocality`) instead of
+the full item population.
 
 ### Submission candidates
 
@@ -147,10 +153,13 @@ kernels: re-upload `previous_card_results.csv` before each resumed run.
 text columns byte-identical to `submission_gemini.csv` (confirmed via direct comparison, not
 just "should be" — see Track A gate below), confidence range valid, `validate_submission` passes
 clean, 1809/3300 (date) and 2154/3300 (locality) rows got a different confidence value, distinct
-confidence value count jumped from 10–13 to 64–500.
+confidence value count jumped from 10–13 to 64–500. **Submitted to Kaggle 2026-08-20: public
+AURC 0.05073** (ref `55648362`), down from the prior best 0.06007 (ref `55607015`) — the
+dev-set gain held on the real leaderboard at a similar relative magnitude (−15.6% public vs
+−19.6% dev). Now the best submitted result.
 
-A third candidate (`submission_gemini_rank_refined_local_vlm.csv`, A1+A2+A3) awaits the Kaggle
-test-set run above.
+A third candidate (`submission_gemini_rank_refined_local_vlm.csv`, A1+A2+A3) would need the
+paused Kaggle test-set run above to complete or be rescoped; not pursued further this session.
 
 ## Track B — evaluated, NOT adopted
 

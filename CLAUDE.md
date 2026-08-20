@@ -33,16 +33,23 @@ performs an order of magnitude better. The classical pipeline's code/tests/docs
 and earlier) still exist and pass their tests, but aren't the active path — read the
 Gemini-specific docs below for current work, not the classical-pipeline plans.
 
-**Current best *submitted* result:** public Kaggle AURC **0.06007** (`submission_gemini.csv`,
-ref `55607015`), from dev-set AURC 0.0715 (raw self-consistency confidence, no fitted
-calibrator, plus a fixed deterministic coverage penalty). Full history and reasoning:
-`docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md`.
+**Current best *submitted* result:** public Kaggle AURC **0.05073** (`submission_gemini_rank_refined.csv`,
+ref `55648362`, submitted 2026-08-20), Track A confidence rank refinement — text byte-identical
+to the prior best (`submission_gemini.csv`, ref `55607015`, 0.06007), only the confidence
+ranking changed. Public delta (0.06007 → 0.05073, −15.6%) confirms the dev-set signal
+(0.0715 → 0.0575, −19.6%) held on the real leaderboard. Full history and reasoning:
+`docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md` (base pipeline) and
+`docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md` (Track A).
 
-**Current best *unsubmitted* candidate:** dev-set AURC **0.0575** (Track A confidence rank
-refinement, text byte-identical to the submitted file — see "Status (2026-08-20)" below and
-`docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md`), or **0.0493** once the
-in-progress local-VLM test-set extension completes. `data/processed/
-submission_gemini_rank_refined.csv` is generated and validated, awaiting user submission.
+**Track A3 (local-VLM within-tier signal) — paused, not abandoned.** Would take dev AURC
+0.0575 → 0.0493 once extended to the full test set, but the Kaggle T4 GPU run
+(`matiaspoullain/museumscat-vlm-test-set-run`) was user-cancelled 2026-08-20 after ~10h at
+293/1633 items — at that rate (~29 items/hr) full completion was multi-day and not worth
+blocking on. Partial progress (293 items) is preserved in the Kaggle progress dataset via the
+usual round-trip pattern (see "Kaggle quota-source infrastructure" below) and can be resumed
+in shorter sessions later, or scoped down (e.g. only re-rank within Gemini's top confidence
+tier, where the signal's gradient is strongest) rather than run to full completion. Not
+currently planned; revisit if there's appetite for another multi-day background GPU job.
 
 How the pipeline got here, in order:
 1. **Per-card Gemini transcription**: `src/gemini_transcribe.py` sends each
@@ -314,18 +321,27 @@ Text is **byte-identical** to `submission_gemini.csv` throughout Track A — con
 diff, not just by construction — since every step operates on confidence alone.
 `data/processed/submission_gemini_rank_refined.csv` (A1+A2) is generated and validated
 (`validate_submission` passes, confidence range checked, 1809/3300 date and 2154/3300 locality
-rows changed confidence, distinct-value count jumped from 10-13 to 64-500). **Not yet submitted
-to Kaggle** — awaiting user action (10/day budget, competition ends 2026-08-31).
+rows changed confidence, distinct-value count jumped from 10-13 to 64-500). **Submitted to
+Kaggle 2026-08-20 (user-triggered): public leaderboard AURC 0.05073** (ref `55648362`), down
+from the prior best 0.06007 (ref `55607015`) — confirms the dev-set gain (0.0715 → 0.0575)
+held on the real leaderboard, at a very similar relative magnitude (−15.6% public vs −19.6%
+dev). This is now the best submitted result.
 
-**A3 test-set extension launched 2026-08-20** (user-authorized, zero Gemini quota): dataset
-`matiaspoullain/museumscat-vlm-test-subset` (3,267 test card crops) + kernel
-`matiaspoullain/museumscat-vlm-test-set-run` (copy of the dev pilot's resumable/subprocess-
-isolated notebook). At 3,267 items × 10 samples on one T4x2, this is realistically multi-day
-(same shape as the main Gemini test-set run) — **status: RUNNING as of 2026-08-20, not
-expected to finish same-day.** Uses the same progress-dataset round-trip as the Gemini kernels
-(re-upload `previous_card_results.csv` before each resumed run). Once complete, generate the
-third candidate via `python -m src.generate_submission_gemini --local-vlm-predictions-path
-<downloaded CSV>`.
+**A3 test-set extension: launched 2026-08-20, user-cancelled same day — paused, not
+abandoned.** Dataset `matiaspoullain/museumscat-vlm-test-subset` (3,267 test card crops) +
+kernel `matiaspoullain/museumscat-vlm-test-set-run` (copy of the dev pilot's resumable/
+subprocess-isolated notebook) were set up and the run was started (zero Gemini quota, T4x2
+GPU). After ~10h it had reached only 293/1633 items (~29 items/hr) — full completion at that
+rate was multi-day, the same shape as the original Gemini test-set run but without the
+Gemini-side justification of "the whole submission depends on this." User cancelled the run
+2026-08-20 rather than block on it. The 293 items processed so far are preserved in the
+Kaggle progress dataset (`kaggle_vlm_test_subset_dataset`) via the usual round-trip pattern —
+not lost, just paused. **Not currently planned, but explicitly a candidate for a future
+session**: options if revisited are (a) resume in several shorter sessions across days,
+(b) scope down to only re-rank within Gemini's top confidence tier specifically (where A3's
+measured dev-set gradient is strongest — 5x for `verbatimLocality`), rather than the full
+1,633-item population. Once/if local-VLM test-set data exists, generate the third candidate
+via `python -m src.generate_submission_gemini --local-vlm-predictions-path <downloaded CSV>`.
 
 **Track B (text/NED reduction via MBR sample selection, HTML-entity decoding, corpus-based
 locality snapping — `src/consensus_text.py`) was built, tested, and evaluated but NOT adopted.**
