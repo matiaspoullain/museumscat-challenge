@@ -215,6 +215,40 @@ subprocess-isolated) Kaggle pipeline could cheaply re-run against the full
 against the already-collected `raw_samples_json` — see the doc's "Outcome"
 section for specifics. Neither is currently planned.
 
+## Status (2026-08-20): partial-MISSING whole-image fallback spike — not merged
+
+Explored extending the whole-image fallback (which today only fires when a
+specimen has *both* fields `MISSING` after the per-card pass) to specimens
+with *exactly one* field `MISSING` — 514/3300 test specimens qualify. Full
+writeup: `docs/superpowers/plans/2026-08-19-partial-missing-wholeimage-
+fallback-spike.md`. Branch `experiment/wholeimage-partial-missing` (kept
+for reference, not merged).
+
+**Result: dev-set and test-set MISSING-rate signals were positive, but the
+real Kaggle submission got worse.** Dev-set AURC improved 0.0715 → 0.069
+(4/4 genuine per-card misses recovered correctly on a 24-slot sample, 0
+hallucinations). At full test-set scale, `verbatimLocality` recovered
+47/50 (94%) of its missing slots, `verbatimDate` only 11/464 (2.4%) —
+consistent with most missing dates being genuinely absent rather than
+per-card misses. Wired into `src.generate_submission_gemini` and
+submitted to Kaggle 2026-08-20: **public AURC regressed 0.06007 → 0.06105**
+(submission ref `55636785`), despite the reduced MISSING rates. Diffing
+old vs. new submissions confirmed only the expected 58 rows changed (no
+collateral bug); manually checking 6 of those 58 against the actual
+specimen photos found 5 exact matches and 1 partially-right-at-lower-
+confidence, no hallucinations — inconclusive on whether the public-score
+regression is real (the public leaderboard is a sample, not the full
+test set, and final standing is decided by the private leaderboard) or a
+genuine quality problem invisible to dev-set/spot-check-scale review.
+
+**Decision: not merged.** The only end-to-end signal that matters (an
+actual Kaggle submission) got worse, which outweighs the dev-set result
+and the clean-looking spot check. `data/processed/submission_gemini.csv`
+(0.06007, submission ref `55607015`) remains the best known submission.
+If revisited: the private leaderboard score (visible after the
+competition ends 2026-08-31) would help settle whether the regression was
+noise.
+
 ## Next steps (updated 2026-08-18)
 
 1. ~~Wire the winning confidence config into `src/generate_submission_gemini.py`~~
