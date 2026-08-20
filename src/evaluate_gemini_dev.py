@@ -22,9 +22,18 @@ from src.calibrate_gemini_confidence import (
     load_wholeimage_predictions,
     merge_predictions_by_specimen,
     oof_calibrated_confidences,
+    rescored_predictions_by_crop,
 )
 from src.clean_gemini_predictions import clean_merged_predictions
 from src.confidence_penalty_rules import apply_confidence_penalty, count_processed_and_contributing
+from src.confidence_rank_rules import apply_structural_missing_tier, combine_tier_and_within_tier_score, within_tier_score
+from src.gemini_transcribe import soft_consistency_scores
+from src.local_vlm_signal import (
+    build_local_vlm_predictions_by_crop,
+    covered_crops_by_specimen,
+    local_vlm_agreement_score,
+)
+from src.locality_corpus import build_locality_corpus
 from src.metrics import aurc, best_pipe_ned
 from src.pipeline import load_manifest
 
@@ -108,6 +117,74 @@ def main():
             )
     _print_report("raw confidence + cleanup + whole-image fallback + coverage penalty (production config)",
                   fallback_errors_by_field, penalized_confidences)
+
+    # Track A: src.confidence_rank_rules layered on top of the production
+    # config -- structural-MISSING tier + soft-consistency/corpus-support
+    # within-tier tiebreak. Text is unaffected (fallback_errors_by_field is
+    # reused as-is); only confidence changes. See
+    # docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md.
+    soft_predictions_by_crop = rescored_predictions_by_crop(
+        os.path.join("data", "processed", "gemini", "dev_card_predictions.csv"), soft_consistency_scores
+    )
+    soft_merged = merge_predictions_by_specimen(
+        soft_predictions_by_crop, manifest_by_image, ground_truth_df["image_file"].tolist()
+    )
+    soft_merged = clean_merged_predictions(soft_merged)
+    soft_merged = clean_merged_predictions(apply_wholeimage_fallback(soft_merged, wholeimage_predictions))
+    locality_corpus = build_locality_corpus()
+
+    rank_refined_confidences = {field: [] for field in FIELD_IS_DATE}
+    for field in FIELD_IS_DATE:
+        for _, row in ground_truth_df.iterrows():
+            image_file = row["image_file"]
+            text, _ = with_fallback[image_file][field]
+            n_processed, n_contributing = count_processed_and_contributing(
+                image_file, field, manifest_by_image, predictions_by_crop
+            )
+            confidence = penalized_confidences[field][len(rank_refined_confidences[field])]
+            confidence = apply_structural_missing_tier(confidence, text, n_processed, n_contributing)
+            soft_confidence = soft_merged[image_file][field][1]
+            score = within_tier_score(field, text, soft_confidence, locality_corpus)
+            confidence = combine_tier_and_within_tier_score(confidence, score)
+            rank_refined_confidences[field].append(confidence)
+    _print_report(
+        "production config + confidence rank refinement (Track A: structural-MISSING tier "
+        "+ soft-consistency/corpus-support within-tier tiebreak, text unchanged)",
+        fallback_errors_by_field, rank_refined_confidences,
+    )
+
+    # Track A3: local VLM (Qwen2.5-VL) agreement, re-purposed as a within-tier
+    # signal rather than the closed spike's blend/gate designs -- zero
+    # additional Gemini quota, reuses the already-collected 152/197 dev crops
+    # in data/processed/gemini/kaggle_vlm_spike_dataset/previous_card_results.csv.
+    local_predictions_by_crop = build_local_vlm_predictions_by_crop()
+    if local_predictions_by_crop:
+        local_covered_crops = covered_crops_by_specimen(manifest_by_image, local_predictions_by_crop)
+        local_merged = merge_predictions_by_specimen(
+            local_predictions_by_crop, manifest_by_image, ground_truth_df["image_file"].tolist()
+        )
+        with_local_vlm_confidences = {field: [] for field in FIELD_IS_DATE}
+        for field in FIELD_IS_DATE:
+            for i, (_, row) in enumerate(ground_truth_df.iterrows()):
+                image_file = row["image_file"]
+                text, _ = with_fallback[image_file][field]
+                n_processed, n_contributing = count_processed_and_contributing(
+                    image_file, field, manifest_by_image, predictions_by_crop
+                )
+                confidence = penalized_confidences[field][i]
+                confidence = apply_structural_missing_tier(confidence, text, n_processed, n_contributing)
+                soft_confidence = soft_merged[image_file][field][1]
+                agreement = local_vlm_agreement_score(image_file, field, text, local_merged, local_covered_crops)
+                score = within_tier_score(field, text, soft_confidence, locality_corpus, agreement)
+                confidence = combine_tier_and_within_tier_score(confidence, score)
+                with_local_vlm_confidences[field].append(confidence)
+        _print_report(
+            "production config + rank refinement + local VLM agreement (Track A3, 152/197 dev "
+            "crop coverage, text unchanged)",
+            fallback_errors_by_field, with_local_vlm_confidences,
+        )
+    else:
+        print("--- local VLM dev data not found, skipping Track A3 report ---")
 
 
 if __name__ == "__main__":

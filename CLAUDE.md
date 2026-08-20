@@ -33,11 +33,16 @@ performs an order of magnitude better. The classical pipeline's code/tests/docs
 and earlier) still exist and pass their tests, but aren't the active path — read the
 Gemini-specific docs below for current work, not the classical-pipeline plans.
 
-**Current best result:** overall dev-set AURC **0.0715** (`verbatimDate` ≈0.026,
-`verbatimLocality` ≈0.117), from raw self-consistency confidence (no fitted
-calibrator) plus a fixed deterministic coverage penalty. Full history and the
-reasoning behind that specific config: `docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md`
-(read this one first for anything confidence/calibration-related).
+**Current best *submitted* result:** public Kaggle AURC **0.06007** (`submission_gemini.csv`,
+ref `55607015`), from dev-set AURC 0.0715 (raw self-consistency confidence, no fitted
+calibrator, plus a fixed deterministic coverage penalty). Full history and reasoning:
+`docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md`.
+
+**Current best *unsubmitted* candidate:** dev-set AURC **0.0575** (Track A confidence rank
+refinement, text byte-identical to the submitted file — see "Status (2026-08-20)" below and
+`docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md`), or **0.0493** once the
+in-progress local-VLM test-set extension completes. `data/processed/
+submission_gemini_rank_refined.csv` is generated and validated, awaiting user submission.
 
 How the pipeline got here, in order:
 1. **Per-card Gemini transcription**: `src/gemini_transcribe.py` sends each
@@ -269,6 +274,73 @@ raw transcriptions (with full `raw_samples_json`) are archived to a
 dedicated Kaggle private dataset, `matiaspoullain/museumscat-partial-
 wholeimage-archive`, in case this is revisited without re-spending quota.
 
+## Status (2026-08-20): confidence rank refinement (Track A) — shipped, dev AURC 0.0715 → 0.0575/0.0493
+
+Full writeup: `docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md`. Branch
+`experiment/confidence-rank-refinement`.
+
+The 2026-08-07 "calibration is exhausted" finding (AURC only depends on confidence *rank*, so
+any monotone reshaping of a single scalar is provably inert) was correct but incomplete: with
+`n_samples=3`, raw self-consistency takes only ~4 distinct values, so **~45-51% of all rows sit
+in one tie block at confidence 1.0**, resolved by Python's stable sort — i.e. arbitrary CSV row
+order. Measured: oracle reordering **within existing ties alone** (zero text changes) takes dev
+AURC 0.0715 → 0.0456 (−36%), and the current tie order is statistically indistinguishable from
+random. Rank order was never fully set.
+
+**Track A (confidence-only re-ranking, shipped):**
+1. `src/confidence_rank_rules.STRUCTURAL_MISSING_CONFIDENCE` — elevates `MISSING_CONFIDENCE`
+   (0.5, an unjustified magic number in `src/merge_records.py`) to 0.95 specifically for
+   specimens where `<2` card crops were Gemini-processed and none found a value (mean NED 0.018,
+   *better* than the confidence=1.0 tier's 0.021, previously ranked below several worse tiers).
+   Deliberately excludes the `>=2`-processed-all-MISSING case, which is
+   `src.confidence_penalty_rules`' own risk pattern. Effect: 0.0715 → 0.0639.
+2. `src.confidence_rank_rules.within_tier_score` — a bounded within-tier tiebreak
+   (`combine_tier_and_within_tier_score`, `TIER_EPSILON=0.01`, can never cross a tier boundary):
+   soft consistency (`src.gemini_transcribe.soft_consistency_scores`, previously unused) for
+   `verbatimDate`; `avg(soft_consistency, corpus_support_score)` for `verbatimLocality`
+   (`src/locality_corpus.py`: frequency of a locality string across all ~15,000 raw samples ±
+   edit-distance-2 fuzzy neighbours). `date_plausibility_score` (parses as a real date) was
+   built and evaluated but **rejected** — inverted risk gradient, net-negative AURC. Combined
+   with (1): **dev AURC 0.0575**, verified through the real production code path.
+3. `src/local_vlm_signal.py` — re-purposes the closed local-VLM spike's already-collected
+   152/197 dev crops as a within-tier *agreement* signal (does Qwen2.5-VL's text match Gemini's
+   final text?) instead of the spike's blend/gate designs, which both failed because the local
+   VLM's information "concentrates in exactly the rows Gemini is already sure about" — i.e.
+   inside the tie the spike never tested reordering. Within Gemini's top tier: agree n=21/25
+   mean NED 0.000/0.039 vs. disagree n=20/23 mean NED 0.033/0.193 (date/locality) — a real, 5x
+   gradient for locality. Combined with (1)+(2): **dev AURC 0.0493**.
+
+Text is **byte-identical** to `submission_gemini.csv` throughout Track A — confirmed by direct
+diff, not just by construction — since every step operates on confidence alone.
+`data/processed/submission_gemini_rank_refined.csv` (A1+A2) is generated and validated
+(`validate_submission` passes, confidence range checked, 1809/3300 date and 2154/3300 locality
+rows changed confidence, distinct-value count jumped from 10-13 to 64-500). **Not yet submitted
+to Kaggle** — awaiting user action (10/day budget, competition ends 2026-08-31).
+
+**A3 test-set extension launched 2026-08-20** (user-authorized, zero Gemini quota): dataset
+`matiaspoullain/museumscat-vlm-test-subset` (3,267 test card crops) + kernel
+`matiaspoullain/museumscat-vlm-test-set-run` (copy of the dev pilot's resumable/subprocess-
+isolated notebook). At 3,267 items × 10 samples on one T4x2, this is realistically multi-day
+(same shape as the main Gemini test-set run) — **status: RUNNING as of 2026-08-20, not
+expected to finish same-day.** Uses the same progress-dataset round-trip as the Gemini kernels
+(re-upload `previous_card_results.csv` before each resumed run). Once complete, generate the
+third candidate via `python -m src.generate_submission_gemini --local-vlm-predictions-path
+<downloaded CSV>`.
+
+**Track B (text/NED reduction via MBR sample selection, HTML-entity decoding, corpus-based
+locality snapping — `src/consensus_text.py`) was built, tested, and evaluated but NOT adopted.**
+MBR text selection is statistically confirmed *harmful* when layered on the full confidence
+stack (paired-bootstrap 90% CI excludes 0 in the harmful direction). HTML-decode + corpus-snap
+trends positive but its CI includes 0, and a manual audit of the 7 dev rows it changed found 2
+confirmed regressions (a correct rare spelling snapped to a more frequent wrong neighbour,
+e.g. `Harboøre`→`Harboør`) alongside 5 genuine fixes — exactly the gazetteer-style risk
+`src.clean_gemini_predictions` already flagged, now empirically confirmed even for a same-corpus
+snap. Kept as tested dead ends so they aren't re-proposed.
+
+Every evaluation in this round scored the **full** 200-row dev set, never a subset — the
+partial-MISSING spike's isolated-24-row measurement (which looked like a 0.0281→0.0166 win but
+was actually +0.00004 on the full set) is the explicit reason why.
+
 ## Next steps (updated 2026-08-18)
 
 1. ~~Wire the winning confidence config into `src/generate_submission_gemini.py`~~
@@ -343,9 +415,14 @@ submodule-per-competition setup).
   first** — confidence calibration experiments and the current recommended config, full
   "Outcome"/"Addendum" sections with final numbers) →
   `2026-08-19-local-vlm-second-opinion-spike.md` (local Qwen2.5-VL-7B on Kaggle GPU as an
-  independent second confidence signal — not adopted, see its "Outcome"; kept as a record
-  of a real-but-unusable correlation and the Kaggle multi-GPU debugging journey to get
-  there, on branch `spike/kaggle-vlm-second-opinion`).
+  independent second confidence signal — not adopted *as a blend/gate*, see its "Outcome"; kept
+  as a record of a real-but-then-unusable correlation and the Kaggle multi-GPU debugging journey
+  to get there, on branch `spike/kaggle-vlm-second-opinion`) →
+  `2026-08-20-confidence-rank-refinement.md` (**read this one for anything current** — the
+  tie-breaking headroom finding, the shipped confidence rank refinement taking dev AURC
+  0.0715 → 0.0575/0.0493, re-purposes the local-VLM spike above as a within-tier signal
+  instead of a blend, and the Track B text-consensus techniques that were evaluated but not
+  adopted; branch `experiment/confidence-rank-refinement`).
 - `tables_figures/eda/` — EDA outputs (grids, notes). Small/committed unless it's a
   derived-from-raw-images preview, in which case gitignore it.
 
