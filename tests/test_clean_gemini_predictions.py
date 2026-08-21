@@ -107,3 +107,19 @@ def test_clean_merged_predictions_does_not_strip_a_dates_trailing_period():
                           "verbatimLocality": ("Kb", 0.8)}}
     cleaned = clean_merged_predictions(merged)
     assert cleaned["a.jpeg"]["verbatimDate"] == ("22.5.1977.", 0.9)
+
+
+def test_sanitize_text_turns_a_bare_newline_into_a_space_not_nothing():
+    # Regression: \n is Unicode category Cc, so a control-character filter that
+    # runs before whitespace collapsing deletes it and welds the two words
+    # together ("Frederiksdal\npr. Harpelinde" -> "Frederiksdalpr. Harpelinde").
+    # 20+ test-set localities are multi-line with no space around the newline.
+    assert sanitize_text("Frederiksdal\npr. Harpelinde") == "Frederiksdal pr. Harpelinde"
+
+
+def test_sanitize_text_turns_a_bare_tab_into_a_space():
+    assert sanitize_text("Thurø\tSvendborg Amt") == "Thurø Svendborg Amt"
+
+
+def test_sanitize_text_still_deletes_non_whitespace_control_characters():
+    assert sanitize_text("Neksel\x00S") == "NekselS"

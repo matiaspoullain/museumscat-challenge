@@ -56,8 +56,13 @@ def sanitize_text(text):
         return text
     text = html.unescape(text)
     text = unicodedata.normalize("NFC", text)
+    # Whitespace controls (\n, \t, ...) become spaces *before* the control-char
+    # filter runs: they're Unicode category Cc, so deleting them outright welds
+    # the surrounding words together on the many multi-line localities that have
+    # no space around the newline ("Frederiksdal\npr. Harpelinde").
+    text = re.sub(r"\s", " ", text)
     text = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C")
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r" +", " ", text).strip()
     return text or "MISSING"
 
 
