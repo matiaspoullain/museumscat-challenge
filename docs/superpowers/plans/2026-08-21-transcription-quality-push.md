@@ -53,7 +53,7 @@ handling. Typical failures are *plausible-Danish-place-name hallucinations*: `J�
 
 Ordered by estimated size.
 
-### D1. `media_resolution` and `thinking_config` are never set — PRIME SUSPECT
+### D1. `media_resolution` and `thinking_config` are never set — FALSIFIED on card crops
 
 `src.gemini_transcribe.call_gemini_once` passes only `system_instruction`, `temperature` and the
 response schema to `GenerateContentConfig`. The installed SDK (google-genai 2.17.0) exposes both
@@ -65,8 +65,37 @@ the image before the model sees it, so real detail is being discarded ahead of i
 task that is *entirely* fine-detail handwriting reading. Thinking is off by default on the
 flash-lite tier.
 
-Hypothesis, not yet a verified gain. It is the cheapest thing to falsify and it would change the
-value of everything below it, so it goes first.
+**Result (2026-08-21): falsified for card crops.** Three arms over the same 197 dev crops, greedy
+(`temperature=0`, one sample) so only the config varied. Scored through the production merge
+(`scratchpad/score_arms.py`), with the whole-image fallback applied as in production:
+
+| arm | date NED | loc NED | loc exact | loc MISSING |
+|---|---|---|---|---|
+| shipped (3 samples @ 0.7) | 0.0372 | 0.1655 | 122 | 34 |
+| `baseline` (greedy, default res) | 0.0415 | 0.1545 | 123 | 36 |
+| `high` (`MEDIA_RESOLUTION_HIGH`) | 0.0384 | 0.1528 | 125 | 36 |
+
+Paired bootstrap over the 200 dev specimens, 5,000 resamples, `high` vs `baseline`:
+
+- `verbatimDate` delta −0.0030, 90% CI [−0.0135, +0.0048] — **not distinguishable from 0**
+- `verbatimLocality` delta −0.0017, 90% CI [−0.0125, +0.0087] — **not distinguishable from 0**
+
+Row level: locality 35 rows changed, 16 better / 19 worse; date 13 changed, 6 better / 7 worse.
+A coin flip, not a mechanism.
+
+**Why it failed, and where it might still work.** A card crop is ~1117×450 px, already legible
+at default tokenization, so raising media resolution has nothing to recover. The *whole-image*
+path is a different story: `src.gemini_batch_runner` sends `img_f.read()` — the raw
+**8192×5464 (45 MP)** photo, unscaled — so default media resolution downsamples the cards to
+near-illegibility there. D1 is therefore falsified for crops and **still open for whole images**;
+see D4.
+
+**Side finding — greedy is as good as self-consistency, for text.** `baseline` (one greedy
+sample) vs the shipped 3 samples at temperature 0.7: date delta +0.0043, 90% CI [−0.0041,
++0.0153]; locality delta −0.0110, 90% CI [−0.0347, +0.0125]. Neither is distinguishable from 0.
+The three samples buy the *confidence* signal AURC depends on, not better text — so any pass
+whose purpose is text only (an ablation, a corpus build, a second opinion) can run at 1/3 the
+request cost.
 
 ### D2. Self-consistency samples one model, so its errors are correlated
 
@@ -87,12 +116,65 @@ the more frequent `Harboør`). The distinction proposed here is that the model g
 list **together with the crop image**, so visual evidence — absent in Track B's post-hoc snap —
 arbitrates.
 
-### D4. The per-card route discards context
+**Result (2026-08-21): ceiling measured, and it is low.** For each of the 62 wrong *single-card*
+localities (excluding MISSING and multi-card, which a candidate list does not address), rank the
+corpus by normalized edit distance to our wrong prediction and ask where the truth lands:
+
+| corpus filter | entries | truth in top-1 | top-3 | top-5 | top-10 |
+|---|---|---|---|---|---|
+| all values | 1,115 | 11% | 27% | 32% | **34%** |
+| seen ≥2× | 282 | 16% | 23% | 24% | 24% |
+| seen ≥3× | 168 | 11% | 13% | 13% | 13% |
+| seen ≥5× | 92 | 8% | 10% | 10% | 10% |
+
+Recall saturates at k=10 and **never exceeds 34%** — so even a perfect chooser reaches only ~21
+of 200 dev rows. Two reasons it is capped:
+
+1. **The corpus is self-poisoning.** Our own wrong predictions are corpus entries, and being
+   distance 0 from themselves they top their own candidate list — `Harublave`, `Hnsm.`,
+   `Rūde skov` and `Gislev kloster\n Vestermose` are all in the corpus *because we produced
+   them*, outranking the truths they should be corrected to.
+2. **Frequency filtering makes it worse, not better** (34% → 24%), because many true localities
+   are themselves rare. There is no threshold that removes our errors without removing real
+   answers.
+
+Blind snap to candidate #1 — the rejected Track B design — re-measured here: 10 better, 14
+worse. Consistent with Track B's rejection.
+
+Not dead, but demoted: a bounded ~21-row ceiling, worth revisiting only after D4.
+
+### D3b. `clean_locality`'s trailing-punctuation rule — AUDITED, correctly tuned
+
+8% of ground-truth locality cards genuinely end in punctuation (`Nekselø S.`,
+`Ravneholm Grusgr.`, `Vind Hede Jyll.`, `Dybbøl.`), so stripping it is not free. Measured by
+neutralizing only that rule: removing it helps 8 dev rows and hurts 10 (mean NED 0.1655 →
+0.1675). The rule stays. Recorded so it is not re-proposed.
+
+### D4. The per-card route discards context — NOW THE PRIME SUSPECT
 
 Multi-card count/order errors: `Grenaa | Brastrup` vs `Grenaa`, `Rotholme | Rotholme Jyll` vs
-`Rotholme Jyll. | Rotholme Jyll.`, dropped `Ti |` and `NS |` prefixes. Whole-image is currently
-used *only* as a both-MISSING fallback, yet adding it moved dev date mean NED 0.192 → 0.037,
-which suggests the crop route loses a great deal.
+`Rotholme Jyll. | Rotholme Jyll.`, dropped `Ti |` and `NS |` prefixes.
+
+Measured directly (2026-08-21), scoring the shipped dev predictions with and without the
+whole-image fallback:
+
+| route | date NED | date exact | loc NED | loc exact | loc MISSING |
+|---|---|---|---|---|---|
+| per-card only | 0.1919 | 143 | **0.3185** | 97 | **74** |
+| per-card + whole-image fallback | 0.0372 | 170 | **0.1655** | 122 | **34** |
+
+The whole-image fallback **halves** locality error and cuts MISSING from 74 to 34 — and it only
+ever runs on the ~72 specimens where the per-card pass returned both fields MISSING. Whole-image
+has never been evaluated as the *primary* route.
+
+Two things compound here, which is why this is now the top candidate:
+
+- The 95 dev specimens that do have whole-image predictions are a **biased subset** — precisely
+  the ones where per-card failed. Whether whole-image also wins on the 105 where per-card
+  succeeded is unmeasured.
+- Whole-image currently runs **crippled**: the raw 45 MP photo at default media resolution (see
+  D1). The one place `MEDIA_RESOLUTION_HIGH` should matter is exactly the place it has never
+  been tried.
 
 ### D5. Text-encoding noise — MEASURED, zero risk
 
