@@ -126,9 +126,20 @@ Two independent Gemini API keys.
 
 | Class | Models | Per key/day | Total available (9 days) |
 |---|---|---|---|
-| flash-lite | `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, … | ~2,000 | **~36,000** |
+| flash-lite | `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, … | ~500 **per model** | **~36,000** |
 | strong flash | `gemini-3.7-flash`, `gemini-3.6-flash` | 20 each = 40 | **~720** |
 | Pro | `gemini-3.1-pro-preview` | 0 (429s on free tier) | — |
+
+**The ~500/day is per *model*, not per key.** The ~2,000/day figure is the sum across four
+flash-lite-class models, and only `src.gemini_batch_runner.ModelRotation` can actually spend it
+that way. Any experiment that must hold the model fixed — every arm of a config A/B, for
+instance — is capped at ~500 requests per key per day, i.e. **two 197-crop dev arms per key per
+day**. Confirmed the hard way on 2026-08-21: the Phase 1 sweep was sized at 591 requests against
+the 2,000 figure and hit a daily 429 118 crops into its third arm.
+
+A batch that hits a daily 429 must stop, not retry — `is_daily_quota_exhausted` distinguishes it
+from a per-minute 429. Retrying a daily 429 four times per remaining item cost ~1.5h of Kaggle
+session on that first run.
 
 One full test pass = **3,267** card crops (or 3,300 whole images). One full dev pass = **~200**.
 So: ~20 dev experiments per day, and room for ~4 full test passes at the end.
