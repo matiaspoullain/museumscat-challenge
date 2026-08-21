@@ -23,7 +23,9 @@ preserves historical/original spelling verbatim, so snapping to modern place
 names risks *introducing* errors on legitimate historical spellings without a
 real gazetteer and dev-set validation to bound that risk.
 """
+import html
 import re
+import unicodedata
 
 # ö isn't a Danish letter (Danish special letters are æ/ø/å) -- any ö Gemini
 # emits is essentially always a misread ø.
@@ -36,7 +38,33 @@ _TRAILING_PUNCTUATION = re.compile(r"[.,]+\s*$")
 _TRAILING_LOEV_SEGMENT = re.compile(r"\s*\|\s*(Mus\.\s*)?L[øo]v\.?\s*$", re.IGNORECASE)
 
 
+def sanitize_text(text):
+    """Strips encoding noise that makes a visually-correct transcription score
+    as wrong: HTML entities Gemini sometimes emits instead of the character
+    ("B&#248;rstinge Mose"), decomposed Unicode ("Niva" + U+030A instead of
+    "Nivå" -- identical on screen, two edits apart), stray control characters
+    ("Neksel\\x00 S."), and embedded newlines.
+
+    NFC specifically, not NFD: every verbatimDate and verbatimLocality value in
+    data/raw/train.csv is already NFC (verified 2026-08-21), so this moves
+    predictions toward the ground truth's own form rather than away from it.
+
+    Applies to both fields -- unlike clean_locality's rules, none of this is
+    locality-specific. Returns "MISSING" if nothing survives.
+    """
+    if text == "MISSING":
+        return text
+    text = html.unescape(text)
+    text = unicodedata.normalize("NFC", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or "MISSING"
+
+
 def clean_locality(text):
+    if text == "MISSING":
+        return text
+    text = sanitize_text(text)
     if text == "MISSING":
         return text
     text = text.translate(_OE_UMLAUT_TO_OSLASH)
@@ -48,13 +76,18 @@ def clean_locality(text):
 def clean_merged_predictions(merged):
     """Applies clean_locality to every specimen's verbatimLocality prediction
     in a src.calibrate_gemini_confidence.merge_predictions_by_specimen-shaped
-    dict, leaving verbatimDate and confidences untouched."""
+    dict, and sanitize_text to its verbatimDate, leaving confidences untouched.
+
+    verbatimDate gets only the encoding sanitation, not clean_locality's rules:
+    those are locality-specific (a trailing period is a real edit-distance
+    error on a locality but free on a date, per
+    src.metrics.normalize_date_punctuation)."""
     cleaned = {}
     for image_file, fields in merged.items():
         date_text, date_confidence = fields["verbatimDate"]
         locality_text, locality_confidence = fields["verbatimLocality"]
         cleaned[image_file] = {
-            "verbatimDate": (date_text, date_confidence),
+            "verbatimDate": (sanitize_text(date_text), date_confidence),
             "verbatimLocality": (clean_locality(locality_text), locality_confidence),
         }
     return cleaned
