@@ -74,6 +74,11 @@ flash-lite tier.
 | shipped (3 samples @ 0.7) | 0.0372 | 0.1655 | 122 | 34 |
 | `baseline` (greedy, default res) | 0.0415 | 0.1545 | 123 | 36 |
 | `high` (`MEDIA_RESOLUTION_HIGH`) | 0.0384 | 0.1528 | 125 | 36 |
+| `high_thinking` (+ `thinking_level="low"`) | 0.0444 | 0.1629 | 121 | 36 |
+
+`high_thinking` is the worst arm on both fields — thinking does not help read handwriting here,
+it slightly hurts. (Its last 91 crops ran on the local key after the Kaggle key hit its daily
+quota; same model, same config.)
 
 Paired bootstrap over the 200 dev specimens, 5,000 resamples, `high` vs `baseline`:
 
