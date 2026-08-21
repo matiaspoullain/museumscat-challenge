@@ -155,7 +155,7 @@ Not dead, but demoted: a bounded ~21-row ceiling, worth revisiting only after D4
 neutralizing only that rule: removing it helps 8 dev rows and hurts 10 (mean NED 0.1655 →
 0.1675). The rule stays. Recorded so it is not re-proposed.
 
-### D4. The per-card route discards context — NOW THE PRIME SUSPECT
+### D4. The per-card route discards context — CONFIRMED, and it is the big one
 
 Multi-card count/order errors: `Grenaa | Brastrup` vs `Grenaa`, `Rotholme | Rotholme Jyll` vs
 `Rotholme Jyll. | Rotholme Jyll.`, dropped `Ti |` and `NS |` prefixes.
@@ -172,14 +172,102 @@ The whole-image fallback **halves** locality error and cuts MISSING from 74 to 3
 ever runs on the ~72 specimens where the per-card pass returned both fields MISSING. Whole-image
 has never been evaluated as the *primary* route.
 
-Two things compound here, which is why this is now the top candidate:
+Two things compounded here, which is why this became the top candidate:
 
-- The 95 dev specimens that do have whole-image predictions are a **biased subset** — precisely
-  the ones where per-card failed. Whether whole-image also wins on the 105 where per-card
-  succeeded is unmeasured.
-- Whole-image currently runs **crippled**: the raw 45 MP photo at default media resolution (see
-  D1). The one place `MEDIA_RESOLUTION_HIGH` should matter is exactly the place it has never
-  been tried.
+- The 95 dev specimens that had whole-image predictions were a **biased subset** — precisely the
+  ones where per-card failed. Whether whole-image also won on the rest was unmeasured.
+- Whole-image ran **crippled**: the raw 45 MP photo at default media resolution (see D1). The one
+  place `MEDIA_RESOLUTION_HIGH` should matter is exactly the place it had never been tried.
+
+#### The experiment (2026-08-21, 200 local requests)
+
+Whole-image over **all 200** dev specimens, greedy (`temperature=0.0`, `n_samples=1`, justified by
+D1's side finding) at `MEDIA_RESOLUTION_HIGH`. 200/200 covered, no duplicates, all on
+`gemini-3.5-flash-lite`, ~52 min at rpm 12 (~22 s/request — a 45 MP upload, not the rate limiter).
+
+| route | date NED | date exact | loc NED | loc exact | loc MISSING |
+|---|---|---|---|---|---|
+| per-card only | 0.1919 | 143 | 0.3185 | 97 | 74 |
+| per-card + whole-image fallback (**shipped**) | 0.0372 | 170 | 0.1655 | 122 | 34 |
+| **whole-image as primary** | **0.0329** | **171** | **0.1224** | **129** | 38 |
+| per-card primary, whole-image fills gaps | 0.0370 | 170 | 0.1576 | 119 | 33 |
+| whole-image primary, per-card fills gaps | 0.0329 | 171 | 0.1241 | 128 | 33 |
+
+Locality mean NED **0.1655 → 0.1224**, −26% relative, 90% paired-bootstrap CI
+**[−0.0707, −0.0159]** — excludes 0. Date improves too but its CI crosses 0. Letting per-card
+fill whole-image's remaining gaps trades 5 MISSING for slightly worse NED; plain whole-image is
+the better text.
+
+#### The bias concern is dead — whole-image wins on every stratum
+
+| stratum | n | per-card loc NED | whole-image loc NED | delta |
+|---|---|---|---|---|
+| per-card FOUND a locality | 126 | 0.1781 | 0.1222 | **−0.0559** |
+| per-card returned MISSING | 74 | 0.5575 | 0.1227 | −0.4348 |
+| single-card specimens | 57 | 0.4406 | 0.1027 | −0.3378 |
+| multi-card specimens | 143 | 0.2698 | 0.1302 | −0.1396 |
+
+It wins on the 126 specimens where per-card *succeeded*, so the gain is not an artifact of the
+biased subset. It also wins on multi-card specimens (−0.1396), where per-card's explicit
+card enumeration was supposed to be structurally superior — that advantage does not materialize.
+Same pattern for `verbatimDate` on all four strata.
+
+#### The oracle floor moves below the barrier
+
+The measurement that opened this investigation was that production text's oracle-rank AURC
+(0.0121) sits *above* the leaderboard top-5's 0.005–0.009 — no confidence work could ever reach
+them. Whole-image text changes that:
+
+| text route | date oracle | loc oracle | overall oracle |
+|---|---|---|---|
+| production (shipped) | 0.0017 | 0.0224 | 0.0121 |
+| **whole-image** | 0.0016 | **0.0139** | **0.0077** |
+
+0.0077 is inside the top-5 band. This is the structural unblock the whole push was looking for.
+
+#### Confidence, rebuilt from signals that already exist (zero quota)
+
+A whole-image-primary route loses the per-card structure the entire Track A/A3 confidence stack
+is keyed to, and at `n_samples=1` it has no self-consistency of its own — so the text win could
+have died on the way to AURC. It does not. Every signal needed is already on disk:
+
+- `agree` — `1 − NED` between the whole-image text and the **independent per-card merge**. This
+  is Track A3's own pattern with the roles swapped, and at full 200/200 coverage instead of
+  Qwen's partial 152/197. Both routes independently returning MISSING counts as agreement (the
+  structural-missing-tier finding: those rows are unusually accurate), one-sided MISSING as
+  maximal disagreement.
+- `corpus` — `src.locality_corpus.corpus_support_score`, unchanged.
+- `vlm` — `src.local_vlm_signal` agreement, unchanged.
+
+Dev AURC, both sides scored through the same code path in one script (the Track A3 side rebuilt
+from `src.evaluate_gemini_dev`'s logic, reproducing its recorded 0.0493 to within 0.0006):
+
+| candidate | date | loc | overall |
+|---|---|---|---|
+| Track A3 — production text (**shipped**, public 0.04423) | 0.0170 | 0.0803 | 0.0487 |
+| whole-image + `agree` (both-MISSING=0.5) | 0.0226 | 0.0620 | 0.0423 |
+| whole-image + `agree` (both-MISSING=1.0) | 0.0166 | 0.0642 | 0.0404 |
+| whole-image + `agree` + `corpus` | 0.0166 | 0.0557 | 0.0362 |
+| **whole-image + `agree` + `corpus` + `vlm`** | **0.0145** | **0.0561** | **0.0353** |
+| whole-image + `agree` + `vlm` | 0.0145 | 0.0622 | 0.0384 |
+
+**All five** confidence designs beat the shipped Track A3, so the conclusion does not depend on
+which one is picked — that is the selection-effect-free reading, and it is the one to trust. The
+best (0.0353, −27% vs 0.0487) was chosen by point estimate and then bootstrapped, which inflates
+its apparent edge; its paired-bootstrap CI vs Track A3 is **[−0.0279, +0.0002] overall** and
+**[−0.0516, +0.0003]** for locality — both land just barely on the inconclusive side of the 90%
+bar, i.e. right at the threshold rather than clear of it.
+
+So the strict adoption bar is met on **text** (locality NED CI excludes 0) and on the **oracle
+floor**, but not quite on end-to-end dev AURC. Given that the leaderboard is the real arbiter
+here, that is a case for spending a test-set pass to get a real read, not for stopping.
+
+#### Unattributed variable
+
+Route (whole-image vs per-card) and `media_resolution` (HIGH vs default) changed together in this
+experiment. A control arm would settle which lever does the work, but it would not change what to
+run next — the winning config is HIGH either way, and D1 already falsified HIGH on crops — so it
+was not spent.
 
 ### D5. Text-encoding noise — MEASURED, zero risk
 
@@ -262,17 +350,19 @@ resolution raises input tokens per request, and that quota is separate from requ
 **Decision gate:** if HIGH moves locality mean NED materially, it reframes Phases 2-4 and the
 full test re-run happens at that config. If it does nothing, proceed to D2/D4 experiments.
 
-### Phase 2 — multi-model ensemble and input framing
+### Phase 2 — whole-image as the primary route (D4) — DONE, and it won
 
-Only after Phase 1 sets the base config.
+200 local requests. Result in D4 above: locality NED 0.1655 → 0.1224 (CI excludes 0), oracle
+floor 0.0121 → 0.0077, dev AURC 0.0487 → 0.0353 with a zero-quota confidence rebuild. Wins on
+every stratum including where per-card succeeded.
 
-- D2: 1 sample × 4 flash-lite-class models vs. today's 3 samples × 1 model, same request count.
-- D4: tight crop (current) vs. padded crop vs. whole image, as the primary route.
+D2 (multi-model ensemble) was **not** run and is now lower priority: it was a way to decorrelate
+the *per-card* confidence vote, and the per-card route is no longer the primary one.
 
-### Phase 3 — corpus-augmented second pass (D3)
+### Phase 3 — corpus-augmented second pass (D3) — demoted
 
-For low-confidence cards, re-query with the crop plus the top-k collection candidates by edit
-proximity, instructed to keep its own reading unless a candidate matches what it sees.
+D3's ceiling was measured at ~21 rows and its candidate-list recall saturates at 34% (see D3).
+Not worth quota while Phase 2's result is unshipped.
 
 ### Phase 4 — targeted escalation with the strong-flash budget
 
@@ -281,7 +371,18 @@ to establish a ceiling. If the strong model reads them correctly, spend the rema
 the lowest-confidence test rows. If it fails too, those rows are genuinely illegible and effort
 returns to confidence ranking for them.
 
-### Phase 5 — full test re-transcription at the winning config, regenerate, validate, submit
+### Phase 5 — full test whole-image pass, regenerate, validate, submit — THE NEXT MOVE
+
+3,300 whole-image requests, greedy, `MEDIA_RESOLUTION_HIGH` — exactly the dev config. Cost is
+~1.7 days of quota out of 9 remaining, and every confidence signal the design needs already
+exists at full test coverage (`test_card_predictions.csv` 3267/3267 for `agree`,
+`test_local_vlm_card_predictions.csv` 3267/3267 for `vlm`, corpus rebuilt from predictions).
+`n_samples=1` deliberately: D1's side finding says extra samples buy confidence, not text, and
+the confidence here comes from cross-route agreement instead.
+
+Wall time, not quota, is the binding constraint: ~22 s/request serial ≈ 20 h, past Kaggle's 12 h
+session cap. Split across both keys — the Kaggle kernel on one, local on the other — via the
+existing progress-dataset round-trip.
 
 `kaggle competitions submit` stays user-triggered. 10/day, 2 final submissions, and neither the
 classical nor any Gemini submission has been marked final yet.
