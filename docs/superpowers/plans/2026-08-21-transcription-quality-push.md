@@ -418,6 +418,39 @@ mid-collection files is what caught the one real bug: uncovered specimens fall b
 text, so scoring agreement between per-card text and *itself* returned a trivial 1.0 and gave
 unverified rows maximum confidence. They now fall back to per-card self-consistency instead.
 
+#### Progress (day 2, 2026-08-22): 3,064/3,300
+
+With all four model-days available the rate roughly doubled as projected: Kaggle 963 new rows,
+local 942, both stopping cleanly on `[stop] every model exhausted`. Merged total **3,064/3,300
+(92.8%)**, still **0 field-level conflicts** — now across 2,800 overlapping keys spanning two
+days, two API keys and both models. The two halves agree on the text of every row they both
+transcribed, which is what greedy `temperature=0.0` decoding is supposed to buy and is worth
+having confirmed at this scale rather than assumed.
+
+The 236 remaining specimens are a single contiguous block (test.csv index 1460..1695) — exactly
+the signature of a forward and a reverse walk converging, and a cheap invariant to check that
+the two halves really are covering disjoint ranges.
+
+Throughput is bounded by **request latency, not quota or `--rpm`**: ~19s per call for a 45 MP
+upload, so ~190 rows/hour per key regardless of how the rate limiter is set. A day's ~1,000-call
+budget therefore needs ~5.5h of wall clock to spend, which is why a Kaggle session's 12h cap has
+never been the binding constraint here.
+
+Prediction stats over the 3,064 collected: `verbatimDate` MISSING 31.0%, `verbatimLocality`
+MISSING 15.3% (vs. the shipped per-card+fallback submission's 31.0% / 15.9%) — consistent with
+D4's dev-set finding that the whole-image route does not lose coverage relative to per-card.
+
+Day 3 needs one short run of 236 rows (~1.2h on a single key), after which the submission
+command in this phase is unblocked.
+
+Operational note for the rebuild: this session's scratchpad had been wiped, so the local runner
+was reconstructed from the notebook's Cell 5 rather than from the lost script. That is the
+reason the runner lives inlined in the notebook in the first place — it is the authoritative
+copy, and the local half is defined as "the same thing, walking backwards". The rebuild also
+fixed a latent waste: the local half now seeds its skip-set from the *merged canonical* file,
+not just its own output, so when the two walks finally meet it skips the other key's rows
+instead of re-transcribing them.
+
 ## Adoption bar
 
 Unchanged from the rank-refinement round: a change ships only with a real mechanism plus a
