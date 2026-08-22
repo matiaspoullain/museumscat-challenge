@@ -60,8 +60,10 @@ from src.local_vlm_signal import (
     covered_crops_by_specimen,
     local_vlm_agreement_score,
 )
+from src.locality_corpus import DEFAULT_SOURCES as LOCALITY_CORPUS_DEFAULT_SOURCES
 from src.locality_corpus import build_locality_corpus
 from src.pipeline import load_manifest
+from src.route_agreement import wholeimage_primary_confidence
 
 TEST_CSV_PATH = os.path.join("data", "raw", "test.csv")
 MANIFEST_PATH = os.path.join("data", "processed", "card_crops", "manifest.csv")
@@ -84,6 +86,18 @@ RANK_REFINED_OUTPUT_PATH = os.path.join("data", "processed", "submission_gemini_
 # reason as RANK_REFINED_OUTPUT_PATH.
 RANK_REFINED_WITH_LOCAL_VLM_OUTPUT_PATH = os.path.join(
     "data", "processed", "submission_gemini_rank_refined_local_vlm.csv"
+)
+# Whole-image-primary route (docs/superpowers/plans/2026-08-21-transcription-quality-push.md,
+# D4). Unlike Track A/A3 above, this one DOES change the transcribed text: it takes
+# it from a whole-image pass over every specimen instead of from the per-card merge,
+# and derives confidence from cross-route agreement (src.route_agreement) since a
+# greedy whole-image pass has no self-consistency of its own. Dev AURC 0.0487 -> 0.0346.
+# A fourth separate file, same attribution reason as the two above.
+WHOLEIMAGE_PRIMARY_OUTPUT_PATH = os.path.join(
+    "data", "processed", "submission_gemini_wholeimage_primary.csv"
+)
+TEST_WHOLEIMAGE_PRIMARY_PREDICTIONS_PATH = os.path.join(
+    "data", "processed", "gemini", "test_wholeimage_primary_predictions.csv"
 )
 
 FIELDS = ("verbatimDate", "verbatimLocality")
@@ -161,6 +175,102 @@ def build_submission_df(image_files, manifest_by_image, predictions_by_crop,
     return pd.DataFrame(rows, columns=REQUIRED_COLUMNS)
 
 
+def build_wholeimage_primary_submission_df(image_files, wholeimage_predictions, per_card_merged,
+                                            locality_corpus=None, local_vlm_merged=None,
+                                            local_vlm_covered_crops=None):
+    """Submission rows for the whole-image-primary route: text from the
+    whole-image pass, confidence from src.route_agreement.
+
+    Two different absences are deliberately kept apart. A specimen whose
+    whole-image row says "MISSING" keeps that MISSING -- it is a real reading of
+    the whole photo, and overriding it with per-card text is exactly the
+    partial-MISSING fallback design that regressed the real leaderboard twice
+    (see the 2026-08-20 status in CLAUDE.md). A specimen with *no* whole-image row
+    at all is an incomplete pass, not a reading, so it falls back to per-card text
+    rather than throwing that reading away.
+
+    per_card_merged is src.calibrate_gemini_confidence.merge_predictions_by_specimen's
+    output (cleaned) -- used as the independent second opinion for agreement, and as
+    that coverage fallback. locality_corpus / local_vlm_merged + local_vlm_covered_crops
+    are optional within-tier signals; None means "not available here", which
+    degrades gracefully."""
+    cleaned_wholeimage = clean_merged_predictions(wholeimage_predictions)
+    rows = []
+    for image_file in image_files:
+        row = {"image_file": image_file}
+        covered = image_file in cleaned_wholeimage
+        source = cleaned_wholeimage[image_file] if covered else per_card_merged[image_file]
+        for field in FIELDS:
+            text, per_card_confidence = source[field]
+            agreement = None
+            if local_vlm_merged is not None:
+                agreement = local_vlm_agreement_score(
+                    image_file, field, text, local_vlm_merged, local_vlm_covered_crops
+                )
+            if covered:
+                confidence = wholeimage_primary_confidence(
+                    field, text, per_card_merged[image_file][field][0], locality_corpus, agreement
+                )
+            else:
+                # No whole-image reading to cross-check against. Scoring agreement
+                # between per-card text and itself would return a trivial 1.0 and
+                # hand an uncovered specimen maximum confidence -- the opposite of
+                # what its missing second opinion warrants. Fall back to the
+                # per-card route's own self-consistency as the tier instead, keeping
+                # the same within-tier signals on top.
+                confidence = combine_tier_and_within_tier_score(
+                    per_card_confidence,
+                    within_tier_score(field, text, per_card_confidence, locality_corpus, agreement),
+                )
+            row[field] = text
+            row[f"{field}_confidence"] = confidence
+        rows.append(row)
+    return pd.DataFrame(rows, columns=REQUIRED_COLUMNS)
+
+
+def generate_wholeimage_primary_submission(
+        test_csv_path=TEST_CSV_PATH, manifest_path=MANIFEST_PATH,
+        predictions_path=TEST_PREDICTIONS_PATH,
+        wholeimage_primary_predictions_path=TEST_WHOLEIMAGE_PRIMARY_PREDICTIONS_PATH,
+        output_path=WHOLEIMAGE_PRIMARY_OUTPUT_PATH, local_vlm_predictions_path=None):
+    """Builds WHOLEIMAGE_PRIMARY_OUTPUT_PATH. The locality corpus is built with the
+    whole-image predictions added as a source, since they are 3,300 fresh
+    transcriptions and by far the largest corroborating evidence available -- passed
+    explicitly rather than added to src.locality_corpus.DEFAULT_SOURCES, so the
+    existing Track A/A3 submissions keep building the exact corpus they were
+    validated against."""
+    image_files = pd.read_csv(test_csv_path)["image_file"].tolist()
+    manifest_by_image = load_manifest(manifest_path)
+    predictions_by_crop = load_predictions_by_crop(predictions_path)
+    per_card_merged = clean_merged_predictions(
+        merge_predictions_by_specimen(predictions_by_crop, manifest_by_image, image_files))
+    wholeimage_predictions = load_wholeimage_predictions(wholeimage_primary_predictions_path)
+    n_covered = sum(1 for f in image_files if f in wholeimage_predictions)
+    print(f"whole-image pass covers {n_covered}/{len(image_files)} specimens "
+          f"({len(image_files) - n_covered} fall back to per-card text)")
+
+    locality_corpus = build_locality_corpus(
+        paths=tuple(LOCALITY_CORPUS_DEFAULT_SOURCES) + (wholeimage_primary_predictions_path,))
+
+    local_vlm_merged, local_vlm_covered_crops = None, None
+    if local_vlm_predictions_path is not None:
+        local_vlm_by_crop = build_local_vlm_predictions_by_crop(local_vlm_predictions_path)
+        local_vlm_merged = merge_predictions_by_specimen(
+            local_vlm_by_crop, manifest_by_image, image_files)
+        local_vlm_covered_crops = covered_crops_by_specimen(manifest_by_image, local_vlm_by_crop)
+
+    out_df = build_wholeimage_primary_submission_df(
+        image_files, wholeimage_predictions, per_card_merged, locality_corpus,
+        local_vlm_merged, local_vlm_covered_crops)
+    errors = validate_submission(out_df, set(image_files))
+    if errors:
+        raise ValueError(f"submission failed validation: {errors}")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_df.to_csv(output_path, index=False)
+    print(f"wrote {len(out_df)} rows to {output_path}")
+
+
 def generate_submission_gemini(test_csv_path=TEST_CSV_PATH, manifest_path=MANIFEST_PATH,
                                 predictions_path=TEST_PREDICTIONS_PATH,
                                 wholeimage_predictions_path=TEST_WHOLEIMAGE_PREDICTIONS_PATH,
@@ -206,8 +316,19 @@ if __name__ == "__main__":
                          help="Also blend in src.local_vlm_signal agreement (requires "
                               "--apply-rank-refinement); writes to "
                               "RANK_REFINED_WITH_LOCAL_VLM_OUTPUT_PATH instead.")
+    parser.add_argument("--wholeimage-primary-predictions-path", default=None,
+                         help="Build the whole-image-primary submission from this whole-image "
+                              "predictions CSV instead: text comes from the whole image, "
+                              "confidence from cross-route agreement (src.route_agreement). "
+                              "Writes to WHOLEIMAGE_PRIMARY_OUTPUT_PATH. Combine with "
+                              "--local-vlm-predictions-path to add the local VLM signal.")
     args = parser.parse_args()
-    if args.local_vlm_predictions_path:
+    if args.wholeimage_primary_predictions_path:
+        generate_wholeimage_primary_submission(
+            wholeimage_primary_predictions_path=args.wholeimage_primary_predictions_path,
+            local_vlm_predictions_path=args.local_vlm_predictions_path,
+        )
+    elif args.local_vlm_predictions_path:
         generate_submission_gemini(
             output_path=RANK_REFINED_WITH_LOCAL_VLM_OUTPUT_PATH, apply_rank_refinement=True,
             local_vlm_predictions_path=args.local_vlm_predictions_path,

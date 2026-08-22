@@ -161,3 +161,112 @@ def test_build_submission_df_local_vlm_predictions_optional():
         local_vlm_predictions_by_crop={},
     )
     assert without.equals(with_empty)
+
+
+# --- whole-image-primary route (docs/.../2026-08-21-transcription-quality-push.md, D4) ---
+
+from src.generate_submission_gemini import build_wholeimage_primary_submission_df
+
+
+def _wholeimage(text_date, text_locality):
+    return {"verbatimDate": (text_date, 1.0), "verbatimLocality": (text_locality, 1.0)}
+
+
+def _per_card(text_date, text_locality):
+    return {"verbatimDate": (text_date, 1.0), "verbatimLocality": (text_locality, 1.0)}
+
+
+def test_wholeimage_primary_takes_its_text_from_the_whole_image_pass():
+    df = build_wholeimage_primary_submission_df(
+        ["a.jpeg"],
+        {"a.jpeg": _wholeimage("22.5.1977", "Lodskovvad")},
+        {"a.jpeg": _per_card("MISSING", "Ravneholm")},
+    )
+    assert df.loc[0, "verbatimDate"] == "22.5.1977"
+    assert df.loc[0, "verbatimLocality"] == "Lodskovvad"
+
+
+def test_wholeimage_primary_keeps_a_whole_image_MISSING_rather_than_filling_it():
+    # A whole-image MISSING is a real reading of the whole specimen, not a coverage
+    # gap -- overriding it with per-card text is the partial-MISSING fallback design
+    # that regressed the leaderboard twice.
+    df = build_wholeimage_primary_submission_df(
+        ["a.jpeg"],
+        {"a.jpeg": _wholeimage("MISSING", "MISSING")},
+        {"a.jpeg": _per_card("22.5.1977", "Lodskovvad")},
+    )
+    assert df.loc[0, "verbatimDate"] == "MISSING"
+    assert df.loc[0, "verbatimLocality"] == "MISSING"
+
+
+def test_wholeimage_primary_falls_back_to_per_card_when_the_pass_never_covered_a_specimen():
+    # Different case entirely: no whole-image row at all (an incomplete pass). Emitting
+    # MISSING there would throw away a real per-card reading for no reason.
+    df = build_wholeimage_primary_submission_df(
+        ["a.jpeg"], {}, {"a.jpeg": _per_card("22.5.1977", "Lodskovvad")})
+    assert df.loc[0, "verbatimDate"] == "22.5.1977"
+    assert df.loc[0, "verbatimLocality"] == "Lodskovvad"
+
+
+def test_wholeimage_primary_confidence_is_higher_when_the_routes_agree():
+    agreeing = build_wholeimage_primary_submission_df(
+        ["a.jpeg"], {"a.jpeg": _wholeimage("22.5.1977", "Lodskovvad")},
+        {"a.jpeg": _per_card("22.5.1977", "Lodskovvad")})
+    disagreeing = build_wholeimage_primary_submission_df(
+        ["a.jpeg"], {"a.jpeg": _wholeimage("22.5.1977", "Lodskovvad")},
+        {"a.jpeg": _per_card("11.9.1954", "Ravneholm")})
+    for field in ("verbatimDate", "verbatimLocality"):
+        assert agreeing.loc[0, f"{field}_confidence"] > disagreeing.loc[0, f"{field}_confidence"]
+
+
+def test_wholeimage_primary_output_passes_submission_validation():
+    from src.generate_submission import validate_submission
+
+    image_files = ["a.jpeg", "b.jpeg"]
+    df = build_wholeimage_primary_submission_df(
+        image_files,
+        {"a.jpeg": _wholeimage("22.5.1977", "Lodskovvad"),
+         "b.jpeg": _wholeimage("MISSING", "MISSING")},
+        {"a.jpeg": _per_card("22.5.1977", "Lodskovvad"),
+         "b.jpeg": _per_card("MISSING", "MISSING")},
+    )
+    assert validate_submission(df, set(image_files)) == []
+
+
+def test_wholeimage_primary_applies_text_cleanup():
+    # sanitize_text / clean_locality must still run: this route changed where the
+    # text comes from, not whether it gets cleaned.
+    df = build_wholeimage_primary_submission_df(
+        ["a.jpeg"],
+        {"a.jpeg": _wholeimage("22.5.1977", "B&#248;rstinge Mose.")},
+        {"a.jpeg": _per_card("22.5.1977", "Børstinge Mose")},
+    )
+    assert df.loc[0, "verbatimLocality"] == "Børstinge Mose"
+
+
+def test_uncovered_specimen_does_not_get_trivial_maximum_confidence():
+    # Regression: for a specimen the whole-image pass never covered, the text falls
+    # back to per-card -- so scoring agreement between per-card text and itself would
+    # return 1.0 and rank an unverified row above genuinely cross-confirmed ones.
+    uncovered = build_wholeimage_primary_submission_df(
+        ["a.jpeg"], {},
+        {"a.jpeg": {"verbatimDate": ("22.5.1977", 0.34),
+                    "verbatimLocality": ("Lodskovvad", 0.34)}},
+    )
+    cross_confirmed = build_wholeimage_primary_submission_df(
+        ["a.jpeg"], {"a.jpeg": _wholeimage("22.5.1977", "Lodskovvad")},
+        {"a.jpeg": _per_card("22.5.1977", "Lodskovvad")},
+    )
+    for field in ("verbatimDate", "verbatimLocality"):
+        assert uncovered.loc[0, f"{field}_confidence"] < cross_confirmed.loc[0, f"{field}_confidence"]
+
+
+def test_uncovered_specimen_confidence_tracks_per_card_self_consistency():
+    def confidence_at(per_card_confidence):
+        df = build_wholeimage_primary_submission_df(
+            ["a.jpeg"], {},
+            {"a.jpeg": {"verbatimDate": ("22.5.1977", per_card_confidence),
+                        "verbatimLocality": ("Lodskovvad", per_card_confidence)}})
+        return df.loc[0, "verbatimDate_confidence"]
+
+    assert confidence_at(1.0) > confidence_at(0.67) > confidence_at(0.34)
