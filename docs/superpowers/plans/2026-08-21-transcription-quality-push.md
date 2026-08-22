@@ -316,6 +316,14 @@ A batch that hits a daily 429 must stop, not retry — `is_daily_quota_exhausted
 from a per-minute 429. Retrying a daily 429 four times per remaining item cost ~1.5h of Kaggle
 session on that first run.
 
+**Experiments and production passes draw on the same per-model daily budget, so a day spent
+measuring is a day not spent transcribing.** Demonstrated on 2026-08-21: Phase 5's first day
+yielded ~1,000 rows, not the ~2,000 the table above suggests, because *both* keys' 
+`gemini-3.5-flash-lite` had already been drained by that same day's experiments — Phase 1's
+media-resolution sweep on the Kaggle key, the D4 dev pass on the local one. Each key had exactly
+one fresh model left, and each returned almost exactly 500 rows. Plan the last production pass
+for a day with no experiments on it.
+
 One full test pass = **3,267** card crops (or 3,300 whole images). One full dev pass = **~200**.
 So: ~20 dev experiments per day, and room for ~4 full test passes at the end.
 
@@ -386,6 +394,29 @@ existing progress-dataset round-trip.
 
 `kaggle competitions submit` stays user-triggered. 10/day, 2 final submissions, and neither the
 classical nor any Gemini submission has been marked final yet.
+
+#### Progress (day 1, 2026-08-21): 1,157/3,300
+
+Both keys ran in parallel, walking `test.csv` from opposite ends so they need no coordination
+until they meet: the Kaggle kernel `matiaspoullain/museumscat-wholeimage-primary` forward (497
+rows, stopped cleanly on quota), a local invocation in reverse (660 rows, same). Zero overlap,
+zero field-level conflicts on merge into
+`data/processed/gemini/test_wholeimage_primary_predictions.csv`.
+
+Both stopped at ~500 because both keys had only one fresh model left — see the Budget section's
+note on experiments spending the same day's production budget. Days 2 and 3 have all four
+model-days available, so ~2,000 then the remaining ~200.
+
+The merged file is seeded into the `museumscat-gemini-progress` dataset under the name the
+notebook's Cell 4 looks for (`test_wholeimage_primary_kaggle.csv`), so day 2's Kaggle session
+resumes past everything *both* keys did rather than redoing the first 497.
+
+Code is already wired and tested ahead of the data:
+`src/route_agreement.py` + `--wholeimage-primary-predictions-path` on
+`src.generate_submission_gemini`, 329 tests passing. An end-to-end run against the real
+mid-collection files is what caught the one real bug: uncovered specimens fall back to per-card
+text, so scoring agreement between per-card text and *itself* returned a trivial 1.0 and gave
+unverified rows maximum confidence. They now fall back to per-card self-consistency instead.
 
 ## Adoption bar
 
