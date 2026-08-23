@@ -208,8 +208,10 @@ def build_wholeimage_primary_submission_df(image_files, wholeimage_predictions, 
                     image_file, field, text, local_vlm_merged, local_vlm_covered_crops
                 )
             if covered:
+                per_card_text, per_card_self_consistency = per_card_merged[image_file][field]
                 confidence = wholeimage_primary_confidence(
-                    field, text, per_card_merged[image_file][field][0], locality_corpus, agreement
+                    field, text, per_card_text, locality_corpus, agreement,
+                    per_card_self_consistency,
                 )
             else:
                 # No whole-image reading to cross-check against. Scoring agreement

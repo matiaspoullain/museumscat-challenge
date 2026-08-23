@@ -498,6 +498,77 @@ Track A/A3 was built against per-card self-consistency tiers that no longer exis
 re-measurement is the next move, and it needs the dev whole-image pass re-collected first (this
 plan's own dev arm was lost with a session scratchpad; see the day-3 note).
 
+## Phase 6: re-measuring the rank layer on the new route (2026-08-23) — SHIPPED, 0.02530 → 0.02382
+
+Track A/A3's rank rules were built against per-card self-consistency tiers that the whole-image
+route does not have (`n_samples=1`), so the whole ranking layer needed re-deriving. D4's own dev
+arm had been lost with a session scratchpad, so the 200-specimen whole-image dev pass was
+re-collected first (200 requests, 21.6 min).
+
+**Stage 1, the diagnostic that drove everything else.** Mean NED by agreement group, full dev set:
+
+| group | n (date) | NED date | n (loc) | NED loc |
+|---|---|---|---|---|
+| exact text agreement | 83 | 0.0132 | 75 | 0.0464 |
+| both-MISSING | 60 | 0.0167 | 33 | 0.1212 |
+| one-MISSING | 32 | 0.0296 | 46 | 0.1750 |
+| partial agreement | 25 | 0.1294 | 45 | 0.2195 |
+
+Two orderings in the shipped design were wrong, each visible independently in both fields:
+
+1. **both-MISSING sat at 1.0**, sharing the top tier with two routes reading identical text. True
+   for dates (0.0167 vs 0.0132 — a specimen genuinely without a date is common and both routes
+   see that), false for localities (0.1212 vs 0.0464, 2.6x riskier). The fix has to be
+   field-specific, which is why `ROUTE_TIERS` is keyed by field.
+2. **one-MISSING sat at 0.0**, the bottom tier, while measuring *better* than partial agreement
+   in both fields. One route reading text the other missed is weak corroboration, not maximal
+   disagreement. Partial agreement — two routes reading the same card differently — is the
+   genuinely worst group of the four, and it used to float above one-MISSING.
+
+**Stage 2, design grid** (full 200 rows, identical text throughout, so every delta is pure rank):
+
+| design | overall | date | locality |
+|---|---|---|---|
+| A shipped (agreement + corpus/vlm) | 0.0381 | 0.0144 | 0.0618 |
+| B risk-ordered tiers | 0.0349 | 0.0128 | 0.0570 |
+| C both-MISSING demotion only | 0.0377 | 0.0152 | 0.0603 |
+| D one-MISSING promotion only | 0.0354 | 0.0121 | 0.0587 |
+| E risk-ordered + coverage penalty | 0.0375 | 0.0158 | 0.0592 |
+| **F risk-ordered + per-card conf tiebreak** | **0.0345** | 0.0125 | 0.0565 |
+| *oracle rank ceiling (same text)* | *0.0080* | | |
+
+Attribution matters here: most of the gain is the **one-MISSING promotion** (D alone, 0.0354),
+not the both-MISSING demotion (C alone, 0.0377, barely moves). The coverage penalty (E) actively
+hurts — it was designed for a per-card text source that no longer exists.
+
+**Stage 3, paired bootstrap** — every candidate improves, **none excludes 0**:
+
+| design | delta | 90% CI |
+|---|---|---|
+| B | −0.00396 | [−0.00892, +0.00081] |
+| C | −0.00132 | [−0.00645, +0.00330] |
+| D | −0.00265 | [−0.00572, +0.00040] |
+| E | −0.00114 | [−0.00579, +0.00353] |
+| F | −0.00426 | [−0.00958, +0.00081] |
+
+**Submitted anyway, deliberately, as an exploratory submission that did not clear the adoption
+bar** — and it worked: **public AURC 0.02530 → 0.02382** (ref `55722819`), −5.8%, versus dev's
+−9.4%. Rank 10th. The judgment call rested on three things the bar does not encode: the text is
+byte-identical to the 0.02530 submission (0 rows changed in either field), so the downside was
+one submission slot and the attribution is unambiguous; all five candidates moved the same
+direction; and the mechanism is an *ordering* error confirmed independently in both fields, not
+a fitted magnitude — which matters because AURC reads nothing but rank, so `ROUTE_TIERS`'
+constants only encode an ordering.
+
+Implementation: `src.route_agreement.ROUTE_TIERS` and `route_tier_score` (new),
+`wholeimage_primary_confidence` gaining a `per_card_confidence` argument;
+`route_agreement_score` is left untouched as the raw agreement primitive. 335 tests pass.
+
+**Still open:** the oracle ceiling for this text is 0.0080 against 0.02382 shipped, so roughly
+two thirds of the remaining gap is still ranking. `partial_scale` (where the partial-agreement
+continuum interleaves with the MISSING groups) is the one genuinely fitted constant and was
+never swept.
+
 ## Adoption bar
 
 Unchanged from the rank-refinement round: a change ships only with a real mechanism plus a

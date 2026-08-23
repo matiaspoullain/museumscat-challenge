@@ -33,15 +33,16 @@ performs an order of magnitude better. The classical pipeline's code/tests/docs
 and earlier) still exist and pass their tests, but aren't the active path — read the
 Gemini-specific docs below for current work, not the classical-pipeline plans.
 
-**Current best *submitted* result:** public Kaggle AURC **0.02530**
-(`submission_gemini_wholeimage_primary.csv`, ref `55721990`, submitted 2026-08-23) — the
-**whole-image-primary route**, which replaced the per-card SAM-crop route as the text source.
-Rank ~11th; 10th place is 0.02524, i.e. 0.00006 away. See the 2026-08-23 Status section below.
+**Current best *submitted* result:** public Kaggle AURC **0.02382**
+(`submission_gemini_wholeimage_primary.csv`, ref `55722819`, submitted 2026-08-23) — the
+**whole-image-primary route** (which replaced the per-card SAM-crop route as the text source)
+plus **risk-ordered route tiers**. Rank 10th. See the 2026-08-23 Status sections below.
 
 Full submission history: `submission.csv` (classical pipeline) 0.60501 → `submission_gemini.csv`
 0.06007 → `submission_gemini_rank_refined.csv` (Track A) 0.05073 →
 `submission_gemini_rank_refined_local_vlm.csv` (Track A3) 0.04423 →
-`submission_gemini_wholeimage_primary.csv` (D4) **0.02530**. Every step's public delta confirmed
+`submission_gemini_wholeimage_primary.csv` (D4) 0.02530 → same file with risk-ordered route
+tiers (Phase 6) **0.02382**. Every step's public delta confirmed
 its dev-set signal held on the real leaderboard (Track A: 0.06007→0.05073 public vs 0.0715→0.0575
 dev; Track A3: 0.05073→0.04423 public, −12.8%, vs 0.0575→0.0493 dev, −14.3%; D4: 0.04423→0.02530
 public, **−42.8%**, vs 0.0487→0.0353 dev, −27.5% — the only step where the public gain *exceeded*

@@ -1,6 +1,7 @@
 import pytest
 
-from src.route_agreement import route_agreement_score, wholeimage_primary_confidence
+from src.route_agreement import (
+    route_agreement_score, route_tier_score, wholeimage_primary_confidence)
 
 
 def test_identical_texts_score_1():
@@ -81,3 +82,58 @@ def test_multi_card_order_is_not_disagreement():
 def test_multi_card_still_penalizes_a_real_difference():
     score = route_agreement_score("Grenaa | Brastrup", "Grenaa | Ravneholm", is_date=False)
     assert 0.0 < score < 1.0
+
+
+def test_locality_both_missing_ranks_below_exact_agreement():
+    # Measured on dev: both-MISSING localities are 2.6x riskier than two routes
+    # reading identical text (0.1212 vs 0.0464 mean NED), so they must not share
+    # the top tier the way route_agreement_score alone would put them.
+    assert route_tier_score("verbatimLocality", "MISSING", "MISSING") < route_tier_score(
+        "verbatimLocality", "Lodskovvad", "Lodskovvad")
+
+
+def test_date_both_missing_stays_near_the_top_tier():
+    # For dates the same group is nearly as safe as exact agreement (0.0167 vs
+    # 0.0132), so the demotion has to be field-specific rather than global.
+    date_gap = 1.0 - route_tier_score("verbatimDate", "MISSING", "MISSING")
+    locality_gap = 1.0 - route_tier_score("verbatimLocality", "MISSING", "MISSING")
+    assert date_gap < locality_gap
+
+
+def test_one_sided_missing_outranks_partial_disagreement():
+    # The ordering error this fixes: one route reading text the other missed is
+    # better evidence than two routes reading the same card differently
+    # (date 0.0296 vs 0.1294, locality 0.1750 vs 0.2195), yet it used to sit at
+    # the bottom tier while partial agreement floated above it.
+    for field in ("verbatimDate", "verbatimLocality"):
+        one_missing = route_tier_score(field, "Lodskovvad", "MISSING")
+        partial = route_tier_score(field, "Lodskovvad", "Lodskovvax")
+        assert one_missing > partial, field
+
+
+def test_exact_agreement_still_outranks_everything():
+    for field in ("verbatimDate", "verbatimLocality"):
+        top = route_tier_score(field, "Lodskovvad", "Lodskovvad")
+        assert top == 1.0
+        for other in (route_tier_score(field, "MISSING", "MISSING"),
+                      route_tier_score(field, "Lodskovvad", "MISSING"),
+                      route_tier_score(field, "Lodskovvad", "Ravneholm")):
+            assert top > other, field
+
+
+def test_per_card_confidence_breaks_ties_within_a_tier():
+    confident = wholeimage_primary_confidence(
+        "verbatimDate", "22.5.1977", "22.5.1977", per_card_confidence=1.0)
+    unsure = wholeimage_primary_confidence(
+        "verbatimDate", "22.5.1977", "22.5.1977", per_card_confidence=0.33)
+    assert confident > unsure
+
+
+def test_per_card_confidence_cannot_cross_a_tier_boundary():
+    # A maximally self-consistent per-card read on a partially-disagreeing
+    # specimen must still rank below an exact-agreement row with no extra signal.
+    disagreeing = wholeimage_primary_confidence(
+        "verbatimLocality", "Lodskovvad", "Ravneholm", per_card_confidence=1.0)
+    agreeing = wholeimage_primary_confidence(
+        "verbatimLocality", "Lodskovvad", "Lodskovvad", per_card_confidence=0.0)
+    assert agreeing > disagreeing

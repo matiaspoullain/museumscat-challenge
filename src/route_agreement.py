@@ -63,29 +63,84 @@ def route_agreement_score(text_a, text_b, is_date):
     return 1.0 - best_pipe_ned(_normalize(text_a), _normalize(text_b), is_date=is_date)
 
 
+# Risk-ordered tiers for the whole-image-primary route, measured on the full
+# 200-row dev set (mean NED per group, lower is better):
+#
+#   field     exact-agree   both-MISSING   one-MISSING   partial-agree
+#   date          0.0132        0.0167        0.0296         0.1294
+#   locality      0.0464        0.1212        0.1750         0.2195
+#
+# Two orderings in the original design were wrong, and both are visible
+# independently in each field rather than in one alone:
+#
+# 1. both-MISSING sat at 1.0, the same top tier as two routes reading identical
+#    text. That holds for dates (a specimen genuinely without a date is common,
+#    and both routes see that correctly) but not for localities, where the group
+#    is 2.6x riskier than exact agreement -- often the label does carry a
+#    locality that both routes missed.
+# 2. one-MISSING sat at 0.0, the bottom tier, yet it measures *better* than
+#    partial agreement in both fields. If one route read text and the other read
+#    none, the text is usually right and the other route simply failed to see the
+#    card; that is weaker evidence than corroboration, not the worst evidence
+#    available. Partial agreement -- two routes reading the same card differently
+#    -- is the genuinely worst group of the four.
+#
+# AURC depends only on rank order, so these constants encode an ordering, not
+# fitted magnitudes; `partial_scale` is what pushes the partial-agreement
+# continuum below both MISSING groups.
+ROUTE_TIERS = {
+    "verbatimDate": {"both_missing": 0.95, "one_missing": 0.75, "partial_scale": 0.5},
+    "verbatimLocality": {"both_missing": 0.75, "one_missing": 0.55, "partial_scale": 0.5},
+}
+
+
+def route_tier_score(field, text, per_card_text):
+    """Risk-ordered coarse tier for one field, from the two routes' readings.
+
+    route_agreement_score is the raw agreement primitive; this is the ranking
+    built on top of it, remapping the two structural MISSING cases and the
+    partial-agreement band to the order the dev-set risk table actually shows
+    (see ROUTE_TIERS). Exact agreement keeps the top tier at 1.0.
+    """
+    tiers = ROUTE_TIERS[field]
+    if text == "MISSING" and per_card_text == "MISSING":
+        return tiers["both_missing"]
+    if text == "MISSING" or per_card_text == "MISSING":
+        return tiers["one_missing"]
+    agreement = route_agreement_score(text, per_card_text, FIELD_IS_DATE[field])
+    if agreement == 1.0:
+        return 1.0
+    return agreement * tiers["partial_scale"]
+
+
 def wholeimage_primary_confidence(field, text, per_card_text, locality_corpus=None,
-                                   local_vlm_agreement=None):
+                                   local_vlm_agreement=None, per_card_confidence=None):
     """Confidence for one field of one specimen under the whole-image-primary
-    route: route agreement as the coarse tier, with corpus support (locality
-    only) and local-VLM agreement averaged into a bounded within-tier tiebreak.
+    route: the risk-ordered route tier as the coarse rank, with corpus support
+    (locality only), local-VLM agreement and the per-card route's own
+    self-consistency averaged into a bounded within-tier tiebreak.
 
     Uses src.confidence_rank_rules.combine_tier_and_within_tier_score so the
-    secondary signals can only ever reorder rows that already tie on agreement,
+    secondary signals can only ever reorder rows that already tie on the tier,
     never override it -- the same additive posture that separated the coverage
     penalty (a proven win) from a fitted multi-feature calibrator (which lost).
     It also caps the result below 1.0, which src.generate_submission.
     validate_submission requires.
 
-    locality_corpus=None and local_vlm_agreement=None both mean "this signal
-    isn't available here", not "this signal says zero" -- with neither, the
-    confidence is route agreement alone.
+    Each optional argument being None means "this signal isn't available here",
+    not "this signal says zero" -- with none of them, the confidence is the route
+    tier alone. per_card_confidence is the per-card route's 3-sample
+    self-consistency, which survives the switch to a greedy whole-image text
+    source and is otherwise unused by it.
     """
-    base = route_agreement_score(text, per_card_text, FIELD_IS_DATE[field])
+    base = route_tier_score(field, text, per_card_text)
     extras = []
     if locality_corpus is not None and field == "verbatimLocality":
         extras.append(corpus_support_score(text, locality_corpus))
     if local_vlm_agreement is not None:
         extras.append(local_vlm_agreement)
+    if per_card_confidence is not None:
+        extras.append(per_card_confidence)
     if not extras:
         return base
     return combine_tier_and_within_tier_score(base, sum(extras) / len(extras))
