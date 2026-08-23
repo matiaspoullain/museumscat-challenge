@@ -480,7 +480,23 @@ so a falling singleton rate is evidence of less noise, not more. Consistent with
 measurement, which is the actual evidence — this only checks the route did not behave
 differently at test scale.
 
-Not submitted; submission stays a user-triggered action.
+**Submitted 2026-08-23 (user-triggered): public AURC 0.04423 → 0.02530** (ref `55721990`),
+**−42.8%**. Rank ~11th; 10th place is 0.02524, 0.00006 away.
+
+This is the only step in the project whose public delta *exceeded* its dev projection
+(−42.8% public vs −27.5% dev). Every prior round landed at or below its dev signal, and the
+partial-MISSING spike landed on the wrong side of zero twice. The plausible reason is that this
+was the first change to alter **text** rather than confidence rank: lower per-row NED improves
+AURC through both the risk axis and the ranking problem at once, whereas a pure re-rank can only
+improve one of them. It also means dev-set deltas are not a reliable *magnitude* estimator
+across change types — only a direction-and-significance test, which is how the adoption bar
+already treats them.
+
+The oracle-rank floor for this text is **0.0077**, versus 0.02530 shipped. Roughly two thirds of
+the remaining gap is therefore still ranking, not transcription — but the ranking machinery from
+Track A/A3 was built against per-card self-consistency tiers that no longer exist. That
+re-measurement is the next move, and it needs the dev whole-image pass re-collected first (this
+plan's own dev arm was lost with a session scratchpad; see the day-3 note).
 
 ## Adoption bar
 

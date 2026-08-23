@@ -33,19 +33,23 @@ performs an order of magnitude better. The classical pipeline's code/tests/docs
 and earlier) still exist and pass their tests, but aren't the active path — read the
 Gemini-specific docs below for current work, not the classical-pipeline plans.
 
-**Current best *submitted* result:** public Kaggle AURC **0.04423** (
-`submission_gemini_rank_refined_local_vlm.csv`, ref `55654639`, submitted 2026-08-20), Track A3
-(rank refinement + local-VLM within-tier agreement) — text byte-identical to every earlier
-submission this round, only the confidence ranking changed further. Full submission history:
-`submission.csv` (classical pipeline) 0.60501 → `submission_gemini.csv` 0.06007 →
-`submission_gemini_rank_refined.csv` (Track A) 0.05073 → `submission_gemini_rank_refined_local_vlm.csv`
-(Track A3) **0.04423**. Each step's public delta confirmed its dev-set signal held on the real
-leaderboard (Track A: 0.06007→0.05073 public vs 0.0715→0.0575 dev; Track A3: 0.05073→0.04423
-public, −12.8%, vs 0.0575→0.0493 dev, −14.3% — close, despite Track A3's dev evaluation only
-having partial 152/197 crop coverage and a noisier `verbatimLocality` bootstrap CI). Full
-history and reasoning: `docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md`
-(base pipeline) and `docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md` (Track A
-and A3).
+**Current best *submitted* result:** public Kaggle AURC **0.02530**
+(`submission_gemini_wholeimage_primary.csv`, ref `55721990`, submitted 2026-08-23) — the
+**whole-image-primary route**, which replaced the per-card SAM-crop route as the text source.
+Rank ~11th; 10th place is 0.02524, i.e. 0.00006 away. See the 2026-08-23 Status section below.
+
+Full submission history: `submission.csv` (classical pipeline) 0.60501 → `submission_gemini.csv`
+0.06007 → `submission_gemini_rank_refined.csv` (Track A) 0.05073 →
+`submission_gemini_rank_refined_local_vlm.csv` (Track A3) 0.04423 →
+`submission_gemini_wholeimage_primary.csv` (D4) **0.02530**. Every step's public delta confirmed
+its dev-set signal held on the real leaderboard (Track A: 0.06007→0.05073 public vs 0.0715→0.0575
+dev; Track A3: 0.05073→0.04423 public, −12.8%, vs 0.0575→0.0493 dev, −14.3%; D4: 0.04423→0.02530
+public, **−42.8%**, vs 0.0487→0.0353 dev, −27.5% — the only step where the public gain *exceeded*
+the dev projection, and also the only step that changed the transcribed **text** rather than
+confidence rank alone). Full history and reasoning:
+`docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md` (base pipeline),
+`2026-08-20-confidence-rank-refinement.md` (Track A and A3), and
+`2026-08-21-transcription-quality-push.md` (D4, current).
 
 **Track A3 test-set extension — complete.** The first Kaggle T4 GPU attempt
 (`matiaspoullain/museumscat-vlm-test-set-run`) was user-cancelled after ~10h at ~565/3267 items
@@ -381,49 +385,98 @@ Every evaluation in this round scored the **full** 200-row dev set, never a subs
 partial-MISSING spike's isolated-24-row measurement (which looked like a 0.0281→0.0166 win but
 was actually +0.00004 on the full set) is the explicit reason why.
 
-## Next steps (updated 2026-08-18)
+## Status (2026-08-23): whole-image-primary route — SHIPPED, public AURC 0.04423 → 0.02530
 
-1. ~~Wire the winning confidence config into `src/generate_submission_gemini.py`~~
-   **DONE — was actually already wired back on 2026-08-08** (commits `7bd3f36`
-   "add deterministic confidence penalty for incomplete multi-card coverage" and
-   `953f781` "wire coverage-penalty confidence into the Gemini submission pipeline"),
-   before this "Next steps" section was last written — the "never started" claim above
-   was stale. `src/generate_submission_gemini.py` already uses raw self-consistency
-   confidence (no calibrator), whole-image fallback, and
-   `src.confidence_penalty_rules.apply_confidence_penalty`. Re-verified 2026-08-18:
-   `conda run -n museumscat-challenge python -m src.evaluate_gemini_dev`'s
-   "production config" line reproduces overall dev AURC **0.071**
-   (verbatimDate 0.026, verbatimLocality 0.117), matching the 2026-08-07 result.
-2. **Generate the actual test-set submission** — **DONE 2026-08-18.**
-   `data/processed/gemini/test_card_predictions.csv` (3267/3267, verified no
-   duplicate `crop_filename`) and `test_wholeimage_predictions.csv` (1041/1041,
-   verified no duplicate `source_image_file`) were complete, so
-   `conda run -n museumscat-challenge python -m src.generate_submission_gemini` was
-   run directly (it already does the merge internally via
-   `src.calibrate_gemini_confidence.merge_predictions_by_specimen` +
-   `apply_wholeimage_fallback`). Output: `data/processed/submission_gemini.csv`,
-   3300 rows, exact required column order, 0 image_files missing/extra vs
-   `data/raw/test.csv`, 0 null confidences. `verbatimDate` MISSING in 31.0% of rows,
-   `verbatimLocality` MISSING in 15.9%; confidence range 0.233–1.000 both fields.
-   **Submitted to Kaggle 2026-08-18 (user-triggered)** — public AURC **0.06007**
-   (submission ref `55607015`), vs. the classical pipeline's 0.60501. 9 of 10
-   daily submissions remained after this one.
-3. **`verbatimLocality` is still the dominant error source** (~0.117 dev AURC vs.
-   `verbatimDate`'s ~0.026, a ~4.5x gap as of 2026-08-07) and confidence calibration is
-   exhausted as a lever (rank-invariant past a point, see 2026-08-07 Status). Further
-   gains need transcription/matching quality work on `verbatimLocality` specifically.
-   `src/analyze_gemini_errors.py` and `src/analyze_confidence_errors.py` are the
-   existing error-mining tools — this repo's convention is mining real errors first,
-   not designing fixes speculatively (see `src/clean_gemini_predictions.py`'s
-   docstring). With the full test set now transcribed, this analysis could also be run
-   against test-set predictions, not just the 200-row dev set — more data, though no
-   ground truth to score against there.
-4. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10
-   submissions/day, 2 final, competition ends 2026-08-31. Never call it from a script
-   or without explicit instruction. As of 2026-08-18, both the classical pipeline's
-   `submission.csv` (0.60501) and the Gemini pipeline's `submission_gemini.csv`
-   (0.06007) have been submitted; **neither has been marked as one of the 2 final
-   submissions yet** — that's a separate, irreversible action on Kaggle's side.
+Full writeup: `docs/superpowers/plans/2026-08-21-transcription-quality-push.md`. Branch
+`research/improve-predictions-2026-08-21`.
+
+**The finding that motivated this round.** Replacing confidence with a *perfect* (oracle) global
+ranking over the shipped text gives dev AURC 0.0127 — but the public leaderboard's top five were
+already at 0.005–0.009. **Our floor with perfect confidence sat above what the leaders already
+scored**, so no further confidence work could reach them. The binding constraint was text, and
+`verbatimLocality` specifically (dev mean NED 0.169 vs `verbatimDate`'s 0.037).
+
+**What changed: the text source.** Every specimen is now transcribed from its **original
+uncropped 45 MP photo** at `media_resolution=MEDIA_RESOLUTION_HIGH`, greedy (`temperature=0.0`,
+`n_samples=1`), replacing the per-card SAM-crop route. Dev results (full 200 rows, never a
+subset):
+
+| route | date NED | loc NED | loc exact | loc MISSING |
+|---|---|---|---|---|
+| per-card only | 0.1919 | 0.3185 | 97 | 74 |
+| production (per-card + fallback, shipped at 0.04423) | 0.0372 | 0.1655 | 122 | 34 |
+| **whole-image primary** | **0.0329** | **0.1224** | **129** | 38 |
+
+Locality NED −26% relative, 90% paired-bootstrap CI **[−0.0707, −0.0159]** excludes 0. The
+oracle-rank floor moves 0.0121 → **0.0077**, i.e. *below* the leaderboard's top-5 band — the
+structural unblock the round was looking for. Whole-image wins on **every stratum**, including
+the one where bias was most plausible (specimens where per-card *did* find a locality:
+0.1781 → 0.1222).
+
+**Why D1 was falsified on crops but D4 won on whole images:** a card crop is ~1117×450 px,
+already legible at default tokenization, so raising media resolution had nothing to recover
+(three arms, all bootstrap CIs including 0). The whole-image path sends the raw 8192×5464 photo,
+which default media resolution downsamples to near-illegibility. Same knob, opposite outcome,
+because the input sizes differ by ~90x in pixels.
+
+**Confidence had to be rebuilt**, since `n_samples=1` removes self-consistency entirely.
+`src/route_agreement.py`: **cross-route agreement** (does whole-image text match per-card text?)
+as the coarse tier, with locality corpus support and local-VLM agreement averaged into a bounded
+within-tier tiebreak via the existing `combine_tier_and_within_tier_score`. Five designs were
+graded on dev; all five beat shipped Track A3 (0.0487), best 0.0353.
+
+**Test-set collection took 3 days** (2026-08-21/22/23), two independent API keys walking
+`test.csv` from opposite ends — Kaggle kernel `matiaspoullain/museumscat-wholeimage-primary`
+forward, a local invocation in reverse — meeting in the middle with no coordination beyond the
+progress-dataset round-trip. **3,300/3,300 covered, 0 field-level conflicts across 3,064
+overlapping keys**: the two keys never disagreed on a single field, which is what greedy
+`temperature=0.0` should buy and is worth having confirmed at that scale.
+
+**Submitted 2026-08-23 (user-triggered): public AURC 0.02530** (ref `55721990`), from 0.04423 —
+**−42.8%**, the largest relative gain since the classical→Gemini switch, and the only step whose
+public delta *exceeded* its dev projection (−27.5%). Consistent with this being the first change
+to touch **text** rather than confidence rank: better text lowers per-row NED, which improves
+AURC through both risk and rank at once. Rank ~11th of the public leaderboard.
+
+**Throughput note for any future full pass:** ~19 s per whole-image call (45 MP upload), so
+~190 rows/hour/key — bounded by request latency, not quota or `--rpm`. A day's ~1,000-call budget
+needs ~5.5 h of wall clock, so Kaggle's 12 h session cap has never been the binding constraint.
+
+**Techniques evaluated and rejected this round** (kept so they aren't re-proposed): `thinking_config`
+(`thinking_level="low"`) was the *worst* arm on both fields; a corpus candidate-list rerank is
+capped at 34% recall because the corpus is self-poisoning (our own wrong predictions are corpus
+entries at distance 0 from themselves) and frequency filtering removes rare *true* localities
+faster than it removes errors.
+
+## Next steps (updated 2026-08-23)
+
+Items 1 and 2 of the previous list (wire the confidence config; generate the test-set
+submission) are long done — see the 2026-08-18 Status section. Item 3 (attack
+`verbatimLocality` text quality) is what the 2026-08-21 push did, and it worked. Current state:
+
+1. **Re-measure the confidence-rank layer on the new route.** Track A/A3's rank refinement
+   (`src/confidence_rank_rules.py`, `src/local_vlm_signal.py`) was designed against per-card
+   self-consistency tiers, which **no longer exist** — the whole-image route runs at
+   `n_samples=1` and its confidence comes from cross-route agreement instead. The oracle-rank
+   floor for the *current* text is **0.0077** against a shipped 0.02530, so most of the
+   remaining headroom is still in ranking. Open questions the D4 grid did not settle: whether
+   both-MISSING agreement (currently scored 1.0, i.e. top tier) deserves that tier; whether the
+   `STRUCTURAL_MISSING_CONFIDENCE` rule and `src.confidence_penalty_rules`' coverage penalty
+   still apply when per-card is no longer the text source.
+2. **The dev whole-image pass must be re-collected before any such re-measurement**
+   (`data/processed/gemini/dev_wholeimage_primary_predictions.csv`, 200 requests, ~35 min) —
+   D4's original dev arm lived in a session scratchpad that was wiped. Note that
+   `dev_wholeimage_predictions.csv` is *not* it: that is the older 71-row both-MISSING fallback
+   pass at default media resolution.
+3. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10
+   submissions/day, 2 final, competition ends 2026-08-31. Never call it from a script or without
+   explicit instruction. Five submissions exist so far (0.60501, 0.06007, 0.06105, 0.06263,
+   0.05073, 0.04423, 0.02530); **none has been marked as one of the 2 final submissions yet** —
+   that is a separate, irreversible action on Kaggle's side, and worth doing before the deadline
+   rather than at it.
+4. **Keep scoring the full 200-row dev set, never a subset.** The partial-MISSING spike's
+   isolated 24-row measurement looked like 0.0281→0.0166 and was actually +0.00004 on the full
+   set. AURC is a global rank metric; a subset scored alone is meaningless.
 
 ## Repo structure
 
