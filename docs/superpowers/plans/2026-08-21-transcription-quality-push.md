@@ -451,6 +451,37 @@ fixed a latent waste: the local half now seeds its skip-set from the *merged can
 not just its own output, so when the two walks finally meet it skips the other key's rows
 instead of re-transcribing them.
 
+#### Progress (day 3, 2026-08-23): 3,300/3,300 — COMPLETE
+
+One local run, 236 rows in 34 minutes, no retries. Final merge: **3,300/3,300 distinct
+specimens, 0 field-level conflicts across 3,064 overlapping keys.** The two independent keys
+never disagreed on a single field across the whole test set.
+
+`data/processed/submission_gemini_wholeimage_primary.csv` generated via
+`python -m src.generate_submission_gemini --wholeimage-primary-predictions-path ...
+--local-vlm-predictions-path ...`. The whole-image pass covers **3,300/3,300, so 0 specimens
+fall back to per-card text** — the uncovered-row branch (and the trivial-self-agreement bug it
+was written for) is now dead code on this submission, though it stays for correctness.
+
+Validation: `validate_submission` clean, exact column order, 0 duplicate rows, 0 empty values,
+0 null confidences, confidence in [0,1] both fields. 329 tests pass. Versus the shipped 0.04423
+submission: `verbatimDate` text changed 794/3300, `verbatimLocality` 1148/3300 — this is the
+first candidate this round whose *text* differs, every prior one having been confidence-only.
+MISSING rates barely move (date 31.0%→30.9%, locality 15.9%→15.4%).
+
+**Label-free sanity check on the text change.** With no test ground truth, an eyeball of the
+first 12 changed localities looked alarming (`Dyrehaven` → `Dyrepaven`/`Dyretiaven`) — but
+sorting by `image_file` groups one collection, so that was a cluster, not a sample. Two checks
+corrected it: a random sample is dominated by genuine repairs (`Lynghornbaevaulnmu` →
+`Dyrehaven`, `Tiüs Sø` → `Tiis Sø`, `MISSING` → `Asserbo Overdrev`) against a minority of real
+regressions; and in aggregate the **singleton rate falls 33.1% → 28.5%** (distinct values
+1228 → 1122). Real Danish place names recur across specimens and character corruptions do not,
+so a falling singleton rate is evidence of less noise, not more. Consistent with D4's dev-set
+measurement, which is the actual evidence — this only checks the route did not behave
+differently at test scale.
+
+Not submitted; submission stays a user-triggered action.
+
 ## Adoption bar
 
 Unchanged from the rank-refinement round: a change ships only with a real mechanism plus a
