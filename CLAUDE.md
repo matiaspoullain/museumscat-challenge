@@ -449,35 +449,34 @@ capped at 34% recall because the corpus is self-poisoning (our own wrong predict
 entries at distance 0 from themselves) and frequency filtering removes rare *true* localities
 faster than it removes errors.
 
-## Next steps (updated 2026-08-23)
+## Next steps (updated 2026-08-23, after Phase 6)
 
-Items 1 and 2 of the previous list (wire the confidence config; generate the test-set
-submission) are long done — see the 2026-08-18 Status section. Item 3 (attack
-`verbatimLocality` text quality) is what the 2026-08-21 push did, and it worked. Current state:
+The earlier list is fully discharged: the confidence config was wired (2026-08-08), the test-set
+submission generated (2026-08-18), `verbatimLocality` text quality attacked (the 2026-08-21 push,
+D4), and the rank layer re-measured on the new route (Phase 6, same day). Current state:
 
-1. **Re-measure the confidence-rank layer on the new route.** Track A/A3's rank refinement
-   (`src/confidence_rank_rules.py`, `src/local_vlm_signal.py`) was designed against per-card
-   self-consistency tiers, which **no longer exist** — the whole-image route runs at
-   `n_samples=1` and its confidence comes from cross-route agreement instead. The oracle-rank
-   floor for the *current* text is **0.0077** against a shipped 0.02530, so most of the
-   remaining headroom is still in ranking. Open questions the D4 grid did not settle: whether
-   both-MISSING agreement (currently scored 1.0, i.e. top tier) deserves that tier; whether the
-   `STRUCTURAL_MISSING_CONFIDENCE` rule and `src.confidence_penalty_rules`' coverage penalty
-   still apply when per-card is no longer the text source.
-2. **The dev whole-image pass must be re-collected before any such re-measurement**
-   (`data/processed/gemini/dev_wholeimage_primary_predictions.csv`, 200 requests, ~35 min) —
-   D4's original dev arm lived in a session scratchpad that was wiped. Note that
-   `dev_wholeimage_predictions.csv` is *not* it: that is the older 71-row both-MISSING fallback
-   pass at default media resolution.
-3. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10
-   submissions/day, 2 final, competition ends 2026-08-31. Never call it from a script or without
-   explicit instruction. Five submissions exist so far (0.60501, 0.06007, 0.06105, 0.06263,
-   0.05073, 0.04423, 0.02530); **none has been marked as one of the 2 final submissions yet** —
-   that is a separate, irreversible action on Kaggle's side, and worth doing before the deadline
-   rather than at it.
-4. **Keep scoring the full 200-row dev set, never a subset.** The partial-MISSING spike's
-   isolated 24-row measurement looked like 0.0281→0.0166 and was actually +0.00004 on the full
-   set. AURC is a global rank metric; a subset scored alone is meaningless.
+1. **Mark the 2 final submissions.** Seven submissions exist (0.60501, 0.06007, 0.06105, 0.06263,
+   0.05073, 0.04423, 0.02530, 0.02382) and **none has been marked final** — a separate,
+   irreversible action on Kaggle's side that the CLI does not do. Worth doing before the
+   2026-08-31 deadline rather than at it. The obvious pick today is ref `55722819` (0.02382).
+2. **Ranking is still where the headroom is.** The oracle-rank ceiling for the *current* text is
+   **0.0080** against 0.02382 shipped — roughly two thirds of the remaining gap. Two concrete
+   unexplored levers: `src.route_agreement.ROUTE_TIERS`' `partial_scale` (where the
+   partial-agreement continuum interleaves with the two MISSING groups) is the one genuinely
+   fitted constant and was never swept; and the within-tier signals are averaged with equal
+   weight, which was never tested against any other weighting.
+3. **Text quality on the partial-agreement group.** Stage 1 of Phase 6 identified it as the
+   worst of the four groups in both fields (date 0.1294, locality 0.2195 mean NED) — 25 and 45
+   dev specimens where the two routes read the same card differently. That is a mined,
+   already-localized error population, which is how this repo prefers to start
+   (`src/clean_gemini_predictions.py`'s docstring), rather than a speculative fix.
+4. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10/day, 2 final,
+   ends 2026-08-31. Never from a script or without explicit instruction.
+5. **Two standing methodology rules, both learned the expensive way.** Score the **full** 200-row
+   dev set, never a subset (the partial-MISSING spike's isolated 24-row measurement looked like
+   0.0281→0.0166 and was actually +0.00004 on the full set; AURC is a global rank metric). And
+   treat a dev delta as a **direction-and-significance test, not a magnitude estimate** — D4's
+   public gain was 1.6x its dev projection while Phase 6's was 0.6x it.
 
 ## Repo structure
 
