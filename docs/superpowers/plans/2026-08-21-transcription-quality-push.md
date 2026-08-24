@@ -569,6 +569,90 @@ two thirds of the remaining gap is still ranking. `partial_scale` (where the par
 continuum interleaves with the MISSING groups) is the one genuinely fitted constant and was
 never swept.
 
+## Phase 7: sweeping the two unmeasured constants (2026-08-24) — measured, NOT adopted
+
+Phase 6 shipped at 0.02382 and left two things in its "Still open": `ROUTE_TIERS`' `partial_scale`,
+the one genuinely fitted constant, and the equal-weight averaging of the within-tier signals.
+Both were swept on the full 200-row dev set, on branch `experiment/rank-param-sweep-2026-08-24`,
+with zero Gemini calls (the sweep re-reads CSVs already on disk). **That branch was deleted once
+the result came back negative, so none of its code is in the tree** — this section is the record.
+The tables below are the deliverable; re-running the sweep is explicitly not recommended, and
+rebuilding the harness from this description would take under an hour if it ever were.
+
+**The harness graded candidates through the real production builder.** Rather than reimplementing
+the confidence path, `build_wholeimage_primary_submission_df` was given temporary `tiers`/`weights`
+passthrough arguments — the same posture that caught the >1.0-confidence bug in the
+rank-refinement round, which the pre-cap unit tests missed and only regenerating the real
+submission found. Validation that it worked: the sweep's baseline reproduced **0.03450**, Phase 6
+design F's number, exactly.
+
+**`partial_scale` — falsified for dates, real but small for localities.**
+
+| value | date overall | locality overall |
+|---|---|---|
+| 0.0 | +0.00013 | +0.00005 |
+| 0.25 | −0.00000 | −0.00001 |
+| **0.5 (shipped)** | — | — |
+| 0.75 | +0.00000 | **−0.00072** |
+| 0.9 | +0.00024 | −0.00056 |
+| 1.0 | +0.00059 | +0.00003 |
+
+The hypothesis motivating the sweep was that at 0.5 the whole partial band is trapped below
+one-MISSING, so two routes reading a card one character apart cannot outrank one route reading
+nothing. That is **false for `verbatimDate`**: values at or below 0.75 are inert (nothing crosses)
+and 0.9/1.0 are actively worse. It holds for `verbatimLocality`, where 0.75 is the best value — at
+that scale a partial needs agreement > 0.733 to clear one-MISSING's 0.55.
+
+**Within-tier weights — the interesting result is a negative one.**
+
+| field / signal | best value | delta | note |
+|---|---|---|---|
+| date / local_vlm | 2.0 | −0.00004 | inert |
+| date / per_card_confidence | 0.5 | −0.00004 | inert |
+| locality / corpus_support | 2.0 | −0.00051 | **removing it costs +0.00275** |
+| locality / local_vlm | 0.5 | −0.00044 | 2.0 and 4.0 both *hurt* |
+| locality / per_card_confidence | 1.0 | 0.00000 | shipped value already best |
+
+Two things worth recording. First, `corpus_support`'s **removal** (+0.00275) is by far the largest
+single effect anywhere in the sweep — an order of magnitude above any gain — so it is the
+load-bearing within-tier signal for locality, and the equal-weight default was already close to
+right for it. Second, the prediction that drove this lever was that `local_vlm` deserved *more*
+weight in locality, since its measured agree/disagree gradient was much stronger there
+(0.039 vs 0.151) than in date (0.005 vs 0.037). The sweep points the **opposite** way: locality
+prefers 0.5, and 2.0/4.0 are worse than shipped. A signal having a steep risk gradient in
+isolation does not mean it should dominate an average that already contains a stronger one.
+
+**Combined candidates** (the two locality coordinates act on the same field, so they could easily
+be re-measuring the same handful of rows):
+
+| candidate | overall | delta | 90% CI |
+|---|---|---|---|
+| loc partial_scale=0.75 | 0.03378 | −0.00070 | [−0.00205, +0.00054] |
+| loc corpus_support=2.0 | 0.03399 | −0.00046 | [−0.00111, +0.00007] |
+| **loc partial_scale=0.75 + corpus_support=2.0** | **0.03330** | −0.00114 | [−0.00266, +0.00028] |
+| + local_vlm=0.5 | 0.03332 | −0.00115 | [−0.00279, +0.00036] |
+
+The two coordinates are close to additive (−0.00070 and −0.00046 separately, −0.00114 together),
+so they are not double-counting the same rows. The fourth candidate adds nothing over the third.
+
+**Decision: not adopted. Both constants stay at their shipped values.** Every interval includes 0,
+and unlike Phase 6 there is no second justification available: Phase 6's ordering error was
+visible independently in *both* fields and its point estimate was −0.00426, 3.7x larger than the
+best here. This round is locality-only fitted magnitudes on n=200 — precisely the shape of thing
+the adoption bar exists to stop. Before the branch was deleted, the test submission was
+regenerated through the parameterized code and came out **byte-identical** to the submitted
+0.02382 file — proof that the defaults were a genuine no-op rather than an assumed one, and the
+reason the deletion costs nothing: `src/route_agreement.py` and
+`src/generate_submission_gemini.py` on this branch are exactly the code that scored 0.02382.
+
+**What this actually settles.** The oracle floor for the current text is 0.00797 against 0.03450
+shipped, a gap of 0.0265 on dev. The best configuration reachable by reshaping these two
+constants recovers **0.00119 of it — 4.5%**. So the remaining ranking headroom is *not* stored in
+how the existing tiers and signals are weighted; it is information the current signals do not
+carry at all. Further tuning of this layer is not worth a submission slot, which redirects the
+remaining effort to text quality on the partial-agreement group (Phase 6's stage-1 table: the
+worst of the four groups in both fields).
+
 ## Adoption bar
 
 Unchanged from the rank-refinement round: a change ships only with a real mechanism plus a

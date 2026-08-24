@@ -459,13 +459,18 @@ D4), and the rank layer re-measured on the new route (Phase 6, same day). Curren
    0.05073, 0.04423, 0.02530, 0.02382) and **none has been marked final** — a separate,
    irreversible action on Kaggle's side that the CLI does not do. Worth doing before the
    2026-08-31 deadline rather than at it. The obvious pick today is ref `55722819` (0.02382).
-2. **Ranking is still where the headroom is.** The oracle-rank ceiling for the *current* text is
-   **0.0080** against 0.02382 shipped — roughly two thirds of the remaining gap. Two concrete
-   unexplored levers: `src.route_agreement.ROUTE_TIERS`' `partial_scale` (where the
-   partial-agreement continuum interleaves with the two MISSING groups) is the one genuinely
-   fitted constant and was never swept; and the within-tier signals are averaged with equal
-   weight, which was never tested against any other weighting.
-3. **Text quality on the partial-agreement group.** Stage 1 of Phase 6 identified it as the
+2. **~~Ranking levers~~ — swept 2026-08-24, exhausted.** Both unexplored levers
+   (`src.route_agreement.ROUTE_TIERS`' `partial_scale` and the equal-weight averaging of the
+   within-tier signals) were measured on the full dev set on branch
+   `experiment/rank-param-sweep-2026-08-24`, **since deleted** — the numbers survive in the plan
+   doc, the code does not. Best combination: dev 0.03450 → 0.03330, 90% CI [−0.00266, +0.00028] —
+   **not adopted**; the submission regenerated through the swept code was byte-identical to the
+   submitted 0.02382 file, so nothing was lost by dropping it. The finding
+   that matters is the negative one: reshaping these constants recovers only **4.5%** of the
+   0.0265 dev gap to the oracle floor, so the remaining ranking headroom is information the
+   current signals do not carry, not a weighting problem. Do not re-propose tuning this layer.
+   See the plan doc's Phase 7 for the tables (including two hypotheses it falsified).
+3. **Text quality on the partial-agreement group — now the main remaining lever.** Stage 1 of Phase 6 identified it as the
    worst of the four groups in both fields (date 0.1294, locality 0.2195 mean NED) — 25 and 45
    dev specimens where the two routes read the same card differently. That is a mined,
    already-localized error population, which is how this repo prefers to start
