@@ -1,4 +1,25 @@
-"""Builds data/processed/submission_gemini.csv from the Gemini per-card
+"""Builds every Gemini submission variant. Four exist; the flags pick one.
+
+CURRENT SHIPPED CONFIG (public AURC 0.02382, the best submitted result) is the
+whole-image-primary route plus the local-VLM signal, i.e. both paths below:
+
+    conda run -n museumscat-challenge python -m src.generate_submission_gemini \
+        --wholeimage-primary-predictions-path \
+            data/processed/gemini/test_wholeimage_primary_predictions.csv \
+        --local-vlm-predictions-path \
+            data/processed/gemini/test_local_vlm_card_predictions.csv
+
+That writes WHOLEIMAGE_PRIMARY_OUTPUT_PATH, taking the transcribed *text* from the
+whole-image pass and confidence from cross-route agreement (src.route_agreement),
+since a greedy whole-image pass has no self-consistency of its own. Every other
+variant below is an earlier, lower-scoring submission kept for attribution: each
+one isolates a single change, so a leaderboard delta can be attributed to it.
+See the constants' comments and CLAUDE.md's Status sections for their scores.
+
+The rest of this docstring describes the no-flag default path, which is the
+2026-08-18 per-card submission (public AURC 0.06007).
+
+Builds data/processed/submission_gemini.csv from the Gemini per-card
 test-set predictions (src.run_gemini_test's output): merges per-specimen
 (src.calibrate_gemini_confidence.merge_predictions_by_specimen), applies
 src.clean_gemini_predictions' text cleanup, overlays the whole-image fallback
@@ -35,9 +56,22 @@ byte-identical to the non-refined submission -- writes to
 RANK_REFINED_OUTPUT_PATH, a separate file, so the two can be diffed and
 submitted independently.
 
-Usage:
+Usage (in submission-history order, worst to best):
+    # per-card + whole-image fallback, raw self-consistency -- public 0.06007
     conda run -n museumscat-challenge python -m src.generate_submission_gemini
-    conda run -n museumscat-challenge python -m src.generate_submission_gemini --apply-rank-refinement
+    # + Track A confidence rank refinement, text unchanged -- public 0.05073
+    conda run -n museumscat-challenge python -m src.generate_submission_gemini \
+        --apply-rank-refinement
+    # + Track A3 local-VLM agreement, text unchanged -- public 0.04423
+    conda run -n museumscat-challenge python -m src.generate_submission_gemini \
+        --apply-rank-refinement \
+        --local-vlm-predictions-path data/processed/gemini/test_local_vlm_card_predictions.csv
+    # whole-image-primary: the first variant that changes TEXT -- public 0.02530,
+    # and 0.02382 once src.route_agreement's risk-ordered tiers landed (Phase 6)
+    conda run -n museumscat-challenge python -m src.generate_submission_gemini \
+        --wholeimage-primary-predictions-path \
+            data/processed/gemini/test_wholeimage_primary_predictions.csv \
+        --local-vlm-predictions-path data/processed/gemini/test_local_vlm_card_predictions.csv
 """
 import os
 

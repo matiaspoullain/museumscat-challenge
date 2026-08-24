@@ -1,9 +1,9 @@
-"""Pipeline clasico de extremo a extremo: palabras OCR -> lineas -> campos -> especimen.
+"""Classical end-to-end pipeline: OCR words -> lines -> fields -> specimen.
 
-Agrupa las palabras reconocidas en lineas (`src.reconstruct_lines`), clasifica
-cada linea en date/locality (`src.classify_field`) y fusiona las tarjetas de un
-especimen (`src.merge_records`). Sigue en la ruta activa porque los cargadores de
-manifiesto/predicciones y `process_specimen` los reutiliza la ruta Gemini.
+Groups recognized words into lines (src.reconstruct_lines), classifies each line
+as date/locality (src.classify_field), and merges a specimen's cards
+(src.merge_records). Still on the active path: the Gemini route reuses its
+manifest/prediction loaders and `process_specimen`.
 """
 
 import csv

@@ -1,8 +1,10 @@
-"""Descarga los datos de la competencia y las paginas de descripcion de Kaggle.
+"""Download the competition data and description pages from Kaggle.
 
-Deja las imagenes y CSVs en `data/raw/` (gitignored) y escribe
-`kaggle_meta/pages/*.md` + `kaggle_meta/files_metadata.json` (si commiteados).
-Punto de entrada: `python -m src.download_kaggle_data`.
+Writes images and CSVs to `data/raw/` (gitignored) plus `kaggle_meta/pages/*.md`
+and `kaggle_meta/files_metadata.json` (committed).
+
+Usage:
+    conda run -n museumscat-challenge python src/download_kaggle_data.py
 """
 
 import csv, json, os, re, zipfile

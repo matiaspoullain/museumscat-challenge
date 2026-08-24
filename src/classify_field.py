@@ -1,9 +1,9 @@
-"""Clasifica una linea de texto reconocida como `date`, `locality` o ninguna.
+"""Classify a recognized text line as `date`, `locality`, or neither.
 
-Reglas puramente lexicas (patrones de fecha con mes romano/arabe, nombres de mes
-daneses, sufijos toponimicos) usadas por `src.pipeline` para repartir el texto de
-una tarjeta entre los dos campos del submission. Es codigo del pipeline clasico,
-pero sigue en la ruta activa porque `src.pipeline` lo importa.
+Purely lexical rules (Roman/Arabic month date patterns, Danish month names,
+toponymic suffixes) used by src.pipeline to split a card's recognized text
+across the submission's two fields. Classical-pipeline code, but still on the
+active path because src.pipeline imports it.
 """
 
 import re

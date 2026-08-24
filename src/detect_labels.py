@@ -1,9 +1,9 @@
-"""Localiza la region de busqueda (ROI) de etiquetas dentro de la foto del especimen.
+"""Locate the label search region (ROI) inside a specimen photo.
 
-Ancla en la tarjeta azul DaSSCo por su firma HSV, corrige la inclinacion de la
-foto a partir del angulo de esa tarjeta y recorta la columna de "mobiliario"
-(regla, escala de color) usando el ancho real detectado de la tarjeta como
-unidad. Es el primer paso de la deteccion que produce `data/processed/card_crops/`.
+Anchors on the blue DaSSCo card by its HSV signature, deskews the photo using
+that card's own angle, and cuts the "furniture" column (ruler, color scale)
+using the card's real detected width as the unit. First stage of the detection
+that produces `data/processed/card_crops/`.
 """
 
 import cv2

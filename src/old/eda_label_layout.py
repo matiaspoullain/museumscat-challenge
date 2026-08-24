@@ -1,7 +1,7 @@
-"""EDA: genera una grilla de fotos de especimenes muestreadas al azar.
+"""EDA: build a grid of randomly sampled specimen photos.
 
-Salida en `tables_figures/eda/layout_grid.png`, para inspeccionar a ojo como
-estan dispuestas las etiquetas dentro de la foto. Script de un solo uso.
+Writes `tables_figures/eda/layout_grid.png`, for eyeballing how labels are laid
+out within a photo. One-off script.
 """
 
 import os

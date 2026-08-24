@@ -1,9 +1,9 @@
-"""Metricas de la competencia: distancia de edicion normalizada (NED) y AURC.
+"""Competition metrics: normalized edit distance (NED) and AURC.
 
-`ned`/`best_pipe_ned` implementan la normalizacion del scorer oficial (incluida
-la de puntuacion en fechas y el emparejamiento entre especimenes separados por
-`|`); `aurc` calcula el area bajo la curva riesgo-cobertura, que depende solo del
-*orden* de las confianzas, nunca de su valor absoluto.
+`ned`/`best_pipe_ned` implement the official scorer's normalization (including
+date punctuation and the matching between `|`-separated specimens); `aurc`
+computes the area under the risk-coverage curve, which depends only on the
+*rank order* of the confidences, never on their absolute values.
 """
 
 import itertools

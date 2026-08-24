@@ -9,6 +9,10 @@ Transcribe two fields from photos of pinned Danish Dung Beetle specimen labels (
 `verbatimDate` and `verbatimLocality`. Only 200 of the 3500 images have ground truth
 (`data/raw/train.csv`); the other 3300 are `data/raw/test.csv`.
 
+**For the pipeline's shape at a glance — inputs, which script writes which file, and where
+text and confidence come from — see the Mermaid diagram in `README.md`.** It is kept accurate
+against the code: it shows only what the shipped route actually reads.
+
 Full task description, data format, and scoring details: `kaggle_meta/pages/*.md`
 (fetched verbatim from the competition pages — `data-description.md` and `evaluation.md`
 are the most important). Read those before assuming anything about edge cases
@@ -490,6 +494,38 @@ D4), and the rank layer re-measured on the new route (Phase 6, same day). Curren
    0.0281→0.0166 and was actually +0.00004 on the full set; AURC is a global rank metric). And
    treat a dev delta as a **direction-and-significance test, not a magnitude estimate** — D4's
    public gain was 1.6x its dev projection while Phase 6's was 0.6x it.
+
+## Status (2026-08-24): repo cleanup — `src/old`, docstrings, pipeline diagram
+
+Branch `chore/src-cleanup-2026-08-24`. No behaviour change: the submission generated after the
+cleanup is byte-identical, and all 335 tests pass.
+
+**What was done, and the criterion used.** The import graph of `src/` was computed and the
+closure reachable from the live entry points (`src.generate_submission_gemini`, the three Gemini
+runners, `src.evaluate_gemini_dev`, `src.download_kaggle_data`, `src.extract_card_crops`) was
+taken as the active set: **28 modules in, 29 out**. The 29 moved to `src/old/` (classical OCR
+pipeline, Danish recognizer fine-tune tooling, one-off EDA/inspection scripts, the manual
+annotation apps, and the closed confidence experiments — `experiment_confidence_grid`,
+`consensus_text`, the `analyze_*` miners). Tests stayed in `tests/` and now import
+`src.old.<module>`, so the moved code keeps its safety net.
+
+**Reachability, not age, was the criterion** — and that distinction is the part worth
+remembering. `pipeline.py`, `classify_field.py`, `merge_records.py`, `reconstruct_lines.py` and
+`generate_submission.py` are all classical-era code that **stayed in `src/`**, because the
+Gemini route still imports them (`validate_submission`, the manifest/prediction loaders, the
+multi-card merge). Deleting or moving them by their 2026-07 timestamps would have broken the
+active path.
+
+Also: the 14 modules that never had a module docstring got one (`metrics`, `pipeline`,
+`merge_records`, `detect_labels`, `classify_field`, ... — the oldest ones);
+`src.generate_submission_gemini`'s docstring was rewritten, since it still described the
+2026-08-18 per-card default as though it were the current config and never mentioned the
+whole-image-primary route that actually ships; and `README.md` gained a **Mermaid pipeline
+diagram** (inputs → scripts → outputs) plus the submission-history table. The diagram was
+checked against the code, not written from the narrative: it deliberately excludes
+`src/run_gemini_test_wholeimage.py` and `src/confidence_penalty_rules.py`, because
+`generate_wholeimage_primary_submission` reads neither — both belong to the earlier variants
+only.
 
 ## Branches (cleaned up 2026-08-24)
 

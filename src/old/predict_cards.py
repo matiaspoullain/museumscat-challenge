@@ -1,7 +1,7 @@
-"""Aplana un resultado de doctr (paginas/bloques/lineas/palabras) a filas planas.
+"""Flatten a doctr result (pages/blocks/lines/words) into flat rows.
 
-Cada palabra reconocida se convierte en una fila con su caja y sus indices, que
-es el formato que consume `src.reconstruct_lines`. Parte del pipeline clasico.
+Each recognized word becomes a row carrying its box and indices -- the format
+src.reconstruct_lines consumes. Part of the classical pipeline.
 """
 
 def rows_from_result(result, crop_filename):

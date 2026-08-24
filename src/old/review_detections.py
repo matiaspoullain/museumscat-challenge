@@ -1,7 +1,7 @@
-"""EDA: dibuja la ROI detectada sobre una muestra de fotos de train, para revisarla.
+"""EDA: draw the detected ROI over a sample of train photos, for review.
 
-Salida en `tables_figures/eda/detection_review/`. Script de inspeccion manual de
-`src.detect_labels.find_search_roi`.
+Writes to `tables_figures/eda/detection_review/`. Manual inspection script for
+src.detect_labels.find_search_roi.
 """
 
 import csv

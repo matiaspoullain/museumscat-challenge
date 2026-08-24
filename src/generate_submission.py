@@ -1,8 +1,8 @@
-"""Construye y valida el CSV de submission del pipeline clasico.
+"""Build and validate the classical pipeline's submission CSV.
 
-`validate_submission` (columnas exactas, rangos de confianza, sin nulos) sigue en
-la ruta activa: `src.generate_submission_gemini` la reutiliza para chequear su
-propia salida antes de subirla.
+`validate_submission` (exact column order, confidence ranges, no nulls) is still
+on the active path: src.generate_submission_gemini reuses it so both the
+classical and Gemini submissions pass the identical format checks.
 """
 
 import os

@@ -1,8 +1,8 @@
-"""Fusiona los valores de varias tarjetas de un mismo especimen en un solo campo.
+"""Merge one specimen's per-card values into a single field value.
 
-Une los textos con `" | "` (formato multi-tarjeta que pide la competencia) y
-promedia las confianzas; devuelve `("MISSING", MISSING_CONFIDENCE)` si ninguna
-tarjeta aporto valor.
+Joins texts with `" | "` (the multi-card format the competition specifies) and
+averages the confidences; returns `("MISSING", MISSING_CONFIDENCE)` when no card
+contributed a value.
 """
 
 MISSING_CONFIDENCE = 0.5

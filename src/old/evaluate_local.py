@@ -1,7 +1,7 @@
-"""Evalua el pipeline clasico (OCR + reglas) contra las 200 filas etiquetadas.
+"""Evaluate the classical pipeline (OCR + rules) against the 200 labeled rows.
 
-Reporta NED por campo y AURC usando `src.metrics`, sobre las predicciones de
-palabras ya generadas. Superado por `src.evaluate_gemini_dev`.
+Reports per-field NED and AURC via src.metrics over already-generated word
+predictions. Superseded by src.evaluate_gemini_dev.
 """
 
 import os

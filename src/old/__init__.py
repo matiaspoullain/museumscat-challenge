@@ -1,7 +1,7 @@
-"""Codigo superado o de experimentos cerrados -- ver `src/old/README.md`.
+"""Superseded stages and closed experiments -- see `src/old/README.md`.
 
-Nada de lo que vive aca esta en la ruta que produce el submission actual. Se
-conserva porque documenta como se construyeron artefactos que si se siguen
-usando (los recortes de tarjetas, las constantes de deteccion) y porque varios
-modulos son la evidencia de callejones sin salida ya medidos.
+Nothing here is imported by the path that produces the current submission. It is
+kept, not deleted, because it documents how artifacts that *are* still in use got
+built (the card crops, the detection constants) and because several modules are
+the measured record of a dead end -- which is what stops one being re-proposed.
 """
