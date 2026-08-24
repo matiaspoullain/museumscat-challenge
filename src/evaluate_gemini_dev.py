@@ -1,5 +1,5 @@
 """Dev-set go/no-go gate for the Gemini per-card VLM approach: computes AURC
-(same methodology as src.evaluate_local) with (a) raw self-consistency
+(same methodology as src.old.evaluate_local) with (a) raw self-consistency
 confidence, (b) raw confidence plus src.clean_gemini_predictions' text cleanup,
 and (c) honest out-of-fold isotonic-calibrated confidence, printed against the
 classical doctr pipeline's documented dev-set baseline (see

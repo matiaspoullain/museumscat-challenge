@@ -3,7 +3,7 @@ a Danish letter, for manual transcription and doctr recognizer fine-tuning.
 See docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.extract_reco_crops
+    conda run -n museumscat-challenge python -m src.old.extract_reco_crops
 """
 import json
 import os
@@ -12,7 +12,7 @@ import re
 import cv2
 import pandas as pd
 
-from src.benchmark_ocr import ENGINES
+from src.old.benchmark_ocr import ENGINES
 from src.detect_labels import get_search_crop
 
 TRAIN_CSV = os.path.join("data", "raw", "train.csv")

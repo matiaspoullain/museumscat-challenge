@@ -5,7 +5,7 @@ docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md Task 6
 for why that step stays manual/explicit.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.package_reco_dataset
+    conda run -n museumscat-challenge python -m src.old.package_reco_dataset
 """
 import json
 import os

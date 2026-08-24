@@ -1,3 +1,11 @@
+"""Localiza la region de busqueda (ROI) de etiquetas dentro de la foto del especimen.
+
+Ancla en la tarjeta azul DaSSCo por su firma HSV, corrige la inclinacion de la
+foto a partir del angulo de esa tarjeta y recorta la columna de "mobiliario"
+(regla, escala de color) usando el ancho real detectado de la tarjeta como
+unidad. Es el primer paso de la deteccion que produce `data/processed/card_crops/`.
+"""
+
 import cv2
 import numpy as np
 

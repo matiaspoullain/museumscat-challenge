@@ -17,7 +17,7 @@ https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth into
 models/sam/ (gitignored, like every other model artifact in this repo).
 
 Usage:
-    conda run -n museumscat-challenge python -m src.eda_sam_card_detection
+    conda run -n museumscat-challenge python -m src.old.eda_sam_card_detection
     (raw masks are cached to CACHE_DIR after the first run, gitignored, so
     re-running to tune select_card_masks's thresholds is fast -- add
     --regenerate to force re-running SAM itself)

@@ -10,7 +10,7 @@ the text field is prefilled with doctr's own guess, so the labeler mostly
 confirms or corrects rather than transcribing from scratch.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.label_crops_app
+    conda run -n museumscat-challenge python -m src.old.label_crops_app
 Then open http://localhost:8765 in a browser (WSL2 forwards localhost to Windows automatically).
 """
 import csv

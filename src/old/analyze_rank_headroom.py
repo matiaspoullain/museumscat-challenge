@@ -13,7 +13,7 @@ Re-run it before adopting any new signal in src.confidence_rank_rules -- dev
 risk table shows a real mechanism, not just a favorable dev-set roll.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.analyze_rank_headroom
+    conda run -n museumscat-challenge python -m src.old.analyze_rank_headroom
 """
 import collections
 import os

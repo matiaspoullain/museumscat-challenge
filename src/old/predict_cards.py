@@ -1,3 +1,9 @@
+"""Aplana un resultado de doctr (paginas/bloques/lineas/palabras) a filas planas.
+
+Cada palabra reconocida se convierte en una fila con su caja y sus indices, que
+es el formato que consume `src.reconstruct_lines`. Parte del pipeline clasico.
+"""
+
 def rows_from_result(result, crop_filename):
     rows = []
     for page in result.pages:

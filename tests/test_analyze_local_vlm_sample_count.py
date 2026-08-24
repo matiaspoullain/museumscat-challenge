@@ -2,7 +2,7 @@ import csv
 import json
 import os
 
-from src.analyze_local_vlm_sample_count import (
+from src.old.analyze_local_vlm_sample_count import (
     N_SAMPLE_COUNTS,
     agreement_gradient_for_n,
     truncated_local_vlm_predictions_by_crop,

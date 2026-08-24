@@ -1,7 +1,7 @@
 """Visualize find_search_roi on a single image, for manual inspection.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.inspect_detection <image_file_or_path> [output_path]
+    conda run -n museumscat-challenge python -m src.old.inspect_detection <image_file_or_path> [output_path]
 
 <image_file_or_path> can be just a filename (looked up under data/raw/images/)
 or a full path. Output defaults to

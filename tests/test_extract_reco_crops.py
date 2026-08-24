@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.extract_reco_crops import rows_with_danish_letters
+from src.old.extract_reco_crops import rows_with_danish_letters
 
 
 def test_keeps_rows_with_danish_letters_in_either_field():

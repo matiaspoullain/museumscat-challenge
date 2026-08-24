@@ -40,14 +40,14 @@ Independent tools:
    number-as-date failure the closed local-VLM spike documented ("608.",
    "2704" emitted as dates) -- a confound self-consistency can't see, since
    Gemini can be unanimously wrong across all 3 samples about a catalog
-   number being a date. EVALUATED AND REJECTED by src.analyze_rank_headroom
+   number being a date. EVALUATED AND REJECTED by src.old.analyze_rank_headroom
    (docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md): inverted
    risk gradient in the largest (confidence=1.0) tier and a net-negative AURC
    effect. Kept here, unused by within_tier_score, as a documented dead end so
    it isn't re-proposed.
 
 4. within_tier_score -- the shipped combiner. Per-field, per
-   src.analyze_rank_headroom's evaluation (dev AURC 0.0715 -> 0.0575 combined
+   src.old.analyze_rank_headroom's evaluation (dev AURC 0.0715 -> 0.0575 combined
    with the structural-missing tier above): soft self-consistency alone for
    verbatimDate (date_plausibility_score was tried and rejected, see above),
    and the unweighted average of soft consistency and
@@ -69,7 +69,7 @@ from src.metrics import normalize_date_punctuation
 # than "checked <2 cards and found nothing", but the latter still clearly beats
 # every majority/minority-agreement text tier it was previously ranked below.
 # A fixed, mechanistically-justified placement (not swept to fit dev noise);
-# src.analyze_rank_headroom reports a placement sensitivity sweep for
+# src.old.analyze_rank_headroom reports a placement sensitivity sweep for
 # transparency, but this constant is the shipped value regardless of which
 # exact number that sweep happens to prefer on 200 dev rows.
 STRUCTURAL_MISSING_CONFIDENCE = 0.95

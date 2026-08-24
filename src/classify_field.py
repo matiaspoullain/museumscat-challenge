@@ -1,3 +1,11 @@
+"""Clasifica una linea de texto reconocida como `date`, `locality` o ninguna.
+
+Reglas puramente lexicas (patrones de fecha con mes romano/arabe, nombres de mes
+daneses, sufijos toponimicos) usadas por `src.pipeline` para repartir el texto de
+una tarjeta entre los dos campos del submission. Es codigo del pipeline clasico,
+pero sigue en la ruta activa porque `src.pipeline` lo importa.
+"""
+
 import re
 
 ROMAN_MONTH = r"(?:X{1,2}I{0,3}|IX|IV|VI{0,3}|I{1,3})"

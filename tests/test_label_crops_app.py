@@ -1,4 +1,4 @@
-from src.label_crops_app import is_valid_confidence, next_unlabeled
+from src.old.label_crops_app import is_valid_confidence, next_unlabeled
 
 
 def test_returns_least_confident_candidate_not_yet_labeled_or_skipped():

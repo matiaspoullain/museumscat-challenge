@@ -13,7 +13,7 @@ vote from the first N of each row's already-collected 10 raw samples
 zero GPU, zero new inference, pure re-analysis of samples already paid for.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.analyze_local_vlm_sample_count
+    conda run -n museumscat-challenge python -m src.old.analyze_local_vlm_sample_count
 """
 import csv
 import json

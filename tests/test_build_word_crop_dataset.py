@@ -1,4 +1,4 @@
-from src.build_word_crop_dataset import has_out_of_vocab_chars, union_box
+from src.old.build_word_crop_dataset import has_out_of_vocab_chars, union_box
 
 
 def test_union_box_single_box_passthrough():

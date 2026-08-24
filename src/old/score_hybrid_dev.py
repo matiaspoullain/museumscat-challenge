@@ -1,7 +1,7 @@
 """Score a hybrid OCR strategy on real dev-set images: per-field NED + AURC.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.score_hybrid_dev [n_images]
+    conda run -n museumscat-challenge python -m src.old.score_hybrid_dev [n_images]
 
 Hybrid rule (see docs/superpowers/plans/2026-07-24-danish-recognizer-finetune.md
 "Fine-tune result" section for why): always use the baseline doctr engine
@@ -28,10 +28,10 @@ import sys
 import cv2
 import pandas as pd
 
-from src.benchmark_ocr import ENGINES
+from src.old.benchmark_ocr import ENGINES
 from src.detect_labels import _deskew, find_search_roi
 from src.metrics import aurc, best_pipe_ned
-from src.score_ocr_dev import _assemble_by_field, _sample_rows
+from src.old.score_ocr_dev import _assemble_by_field, _sample_rows
 
 IMAGES_DIR = os.path.join("data", "raw", "images")
 

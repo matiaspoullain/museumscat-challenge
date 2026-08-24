@@ -5,7 +5,7 @@ docs/superpowers/plans/2026-07-29-card-word-boxes-danish-finetune.md for
 why that step stays manual/explicit.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.package_reco_dataset_v2
+    conda run -n museumscat-challenge python -m src.old.package_reco_dataset_v2
 """
 import json
 import os

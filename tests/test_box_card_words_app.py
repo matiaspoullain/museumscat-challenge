@@ -1,4 +1,4 @@
-from src.box_card_words_app import build_word_queue, next_unboxed
+from src.old.box_card_words_app import build_word_queue, next_unboxed
 
 
 def test_build_word_queue_splits_selections_into_words_in_order():

@@ -4,7 +4,7 @@ tables_figures/eda/card_detection_variance_test/notes.md's "Follow-up:
 blur-then-variance" section for the numeric case that motivated this).
 
 Usage:
-    conda run -n museumscat-challenge python -m src.eda_card_blur_variance_test
+    conda run -n museumscat-challenge python -m src.old.eda_card_blur_variance_test
 
 Output: tables_figures/eda/card_detection_variance_test/blur_<sigma>_<image_file>
 -- annotated crop (red = candidate card box) + raw variance heatmap

@@ -4,7 +4,7 @@ Gemini dev-set predictions' errors, to find consistent, correctable mistakes
 for deciding what rules belong in src.clean_gemini_predictions.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.analyze_gemini_errors
+    conda run -n museumscat-challenge python -m src.old.analyze_gemini_errors
 """
 import collections
 import difflib

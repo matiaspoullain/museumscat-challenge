@@ -1,3 +1,9 @@
+"""Evalua el pipeline clasico (OCR + reglas) contra las 200 filas etiquetadas.
+
+Reporta NED por campo y AURC usando `src.metrics`, sobre las predicciones de
+palabras ya generadas. Superado por `src.evaluate_gemini_dev`.
+"""
+
 import os
 
 import pandas as pd

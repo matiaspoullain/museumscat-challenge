@@ -1,7 +1,7 @@
 """Benchmark an OCR engine on real detected ROI crops, for visual inspection.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.benchmark_ocr <engine> [n_images]
+    conda run -n museumscat-challenge python -m src.old.benchmark_ocr <engine> [n_images]
 
 <engine>: one of "doctr", "easyocr", "pytesseract" (only "doctr" implemented so far).
 n_images: how many train images to sample (default 5).

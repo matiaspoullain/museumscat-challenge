@@ -1,5 +1,5 @@
 """Deterministic confidence penalty for a structural risk pattern mined via
-src.analyze_confidence_errors on the dev set: when a specimen has >=2 Gemini-
+src.old.analyze_confidence_errors on the dev set: when a specimen has >=2 Gemini-
 processed card crops but at least one of them didn't contribute a value to a
 given field, that field's transcription is at real risk of having missed a
 second card's value entirely -- self-consistency alone can't see this, since it
@@ -9,7 +9,7 @@ wrong-rate is 34.3% (12/35) vs. 18.1% (31/171) when it doesn't apply -- roughly
 1.9x (mined 2026-08-07, see docs/superpowers/plans/2026-08-07-confidence-calibration-experiments.md).
 
 Kept as a fixed multiplicative penalty rather than folded into
-src.gemini_calibration_features' learned multi-feature calibrator, so the two
+src.old.gemini_calibration_features' learned multi-feature calibrator, so the two
 approaches (hardcoded rule vs. fit-on-dev-data) can be compared head to head."""
 
 PENALTY_FACTOR = 0.7

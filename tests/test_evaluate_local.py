@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.evaluate_local import score_predictions
+from src.old.evaluate_local import score_predictions
 
 
 def test_score_predictions_perfect_match_is_zero_ned():

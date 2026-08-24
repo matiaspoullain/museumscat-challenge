@@ -1,5 +1,5 @@
 """Post-processing text cleanup for Gemini verbatimLocality predictions, based
-on consistent error patterns mined by src.analyze_gemini_errors from the dev-set
+on consistent error patterns mined by src.old.analyze_gemini_errors from the dev-set
 run: "o" is not a Danish letter but Gemini occasionally emits it for ø, and a
 trailing period on a locality (unlike a date's punctuation) isn't normalized
 by the scorer and so counts as a real edit-distance error.

@@ -1,3 +1,10 @@
+"""Reagrupa las palabras reconocidas en lineas de texto por tarjeta.
+
+Ordena por indice de palabra dentro de cada (crop, bloque, linea) y concatena;
+es el paso entre `src.old.predict_cards` y `src.classify_field` dentro de
+`src.pipeline`.
+"""
+
 def group_into_lines(word_rows):
     by_crop_line = {}
     for row in word_rows:

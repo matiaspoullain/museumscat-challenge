@@ -5,9 +5,9 @@ import cv2
 import numpy as np
 import pandas as pd
 
-import src.experiment_confidence_grid as experiment_confidence_grid
-from src.experiment_confidence_grid import enumerate_configs, evaluate_config
-from src.gemini_calibration_features import contributing_crops_by_specimen
+import src.old.experiment_confidence_grid as experiment_confidence_grid
+from src.old.experiment_confidence_grid import enumerate_configs, evaluate_config
+from src.old.gemini_calibration_features import contributing_crops_by_specimen
 from src.metrics import aurc
 
 

@@ -1,4 +1,4 @@
-from src.match_card_labels_app import build_candidates, build_queue, next_unmatched, unused_candidates
+from src.old.match_card_labels_app import build_candidates, build_queue, next_unmatched, unused_candidates
 
 
 def test_single_value_each_field():

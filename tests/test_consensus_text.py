@@ -1,4 +1,4 @@
-from src.consensus_text import decode_html_entities, mbr_consensus_scores, snap_to_corpus
+from src.old.consensus_text import decode_html_entities, mbr_consensus_scores, snap_to_corpus
 
 
 def _samples(date_texts, locality_texts):

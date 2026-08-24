@@ -1,3 +1,11 @@
+"""Metricas de la competencia: distancia de edicion normalizada (NED) y AURC.
+
+`ned`/`best_pipe_ned` implementan la normalizacion del scorer oficial (incluida
+la de puntuacion en fechas y el emparejamiento entre especimenes separados por
+`|`); `aurc` calcula el area bajo la curva riesgo-cobertura, que depende solo del
+*orden* de las confianzas, nunca de su valor absoluto.
+"""
+
 import itertools
 import re
 

@@ -5,7 +5,7 @@ per-word ground truth from the manual box-labeling app.
 
 Deviates from the plan's original design
 (docs/superpowers/plans/2026-07-29-card-word-boxes-danish-finetune.md,
-Task 9): that version ran src.benchmark_ocr.ENGINES, which wraps a full
+Task 9): that version ran src.old.benchmark_ocr.ENGINES, which wraps a full
 detector+recognizer pipeline. Since these crops are already tight
 single-word images, the db_resnet50/fast_base detector frequently fails to
 find any text region at all (~60-70% empty results in a manual check),
@@ -14,7 +14,7 @@ quality. This script instead calls doctr's recognition_predictor directly,
 skipping detection entirely, to isolate the recognizer's own accuracy.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.evaluate_card_reco
+    conda run -n museumscat-challenge python -m src.old.evaluate_card_reco
 """
 import json
 import os

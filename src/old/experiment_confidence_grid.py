@@ -8,7 +8,7 @@ favor of raw confidence, per src.evaluate_gemini_dev's best-performing block) --
 this grid's job is to find the best config among ones that DO calibrate.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.experiment_confidence_grid
+    conda run -n museumscat-challenge python -m src.old.experiment_confidence_grid
 """
 import os
 
@@ -25,7 +25,7 @@ from src.calibrate_gemini_confidence import (
 from src.clean_gemini_predictions import clean_merged_predictions
 from src.confidence_penalty_rules import apply_confidence_penalty, count_processed_and_contributing
 from src.eda_card_visual_features import IMAGES_DIR
-from src.gemini_calibration_features import (
+from src.old.gemini_calibration_features import (
     build_feature_rows,
     contributing_crops_by_specimen,
     oof_multi_feature_calibrated_confidences,

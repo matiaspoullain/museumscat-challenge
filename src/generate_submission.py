@@ -1,3 +1,10 @@
+"""Construye y valida el CSV de submission del pipeline clasico.
+
+`validate_submission` (columnas exactas, rangos de confianza, sin nulos) sigue en
+la ruta activa: `src.generate_submission_gemini` la reutiliza para chequear su
+propia salida antes de subirla.
+"""
+
 import os
 
 import pandas as pd

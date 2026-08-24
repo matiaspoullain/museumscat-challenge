@@ -55,7 +55,7 @@ confidence rank alone). Full history and reasoning:
 **Track A3 test-set extension — complete.** The first Kaggle T4 GPU attempt
 (`matiaspoullain/museumscat-vlm-test-set-run`) was user-cancelled after ~10h at ~565/3267 items
 (both GPUs combined, 10 stochastic samples/item at temperature 0.7; ~29 items/hr/GPU) — at that
-rate full completion was multi-day. Before relaunching, `src.analyze_local_vlm_sample_count`
+rate full completion was multi-day. Before relaunching, `src.old.analyze_local_vlm_sample_count`
 (zero GPU, re-derives the majority vote from the 10 raw samples already collected for 152 dev
 crops, truncated to 1/3/5/10) confirmed the within-tier agree/disagree NED gradient
 `src.local_vlm_signal.local_vlm_agreement_score` actually consumes — which only ever reads the
@@ -357,7 +357,7 @@ dev). This is now the best submitted result.
 (dataset `matiaspoullain/museumscat-vlm-test-subset`, kernel
 `matiaspoullain/museumscat-vlm-test-set-run`, 10 stochastic samples/item at temperature 0.7)
 was user-cancelled after ~10h at ~565/3267 items (~29 items/hr/GPU) — full completion at that
-rate was multi-day. Before relaunching, `src.analyze_local_vlm_sample_count` (new, zero GPU)
+rate was multi-day. Before relaunching, `src.old.analyze_local_vlm_sample_count` (new, zero GPU)
 re-derived the majority vote from the 152 already-collected dev crops' raw samples truncated to
 1/3/5/10, and found the agree/disagree NED gradient `src.local_vlm_signal.
 local_vlm_agreement_score` actually consumes (only the majority-vote *text*, never Qwen's own
@@ -375,7 +375,7 @@ work needed after all. Generated the third candidate
 partial crop coverage. This is now the best submitted result; nothing left pending on Track A3.
 
 **Track B (text/NED reduction via MBR sample selection, HTML-entity decoding, corpus-based
-locality snapping — `src/consensus_text.py`) was built, tested, and evaluated but NOT adopted.**
+locality snapping — `src/old/consensus_text.py`) was built, tested, and evaluated but NOT adopted.**
 MBR text selection is statistically confirmed *harmful* when layered on the full confidence
 stack (paired-bootstrap 90% CI excludes 0 in the harmful direction). HTML-decode + corpus-snap
 trends positive but its CI includes 0, and a manual audit of the 7 dev rows it changed found 2
@@ -517,7 +517,17 @@ conventions were borrowed from — same `download_kaggle_data.py` pattern, same
 `kaggle_meta/pages/` convention, but flattened since this is one competition, not a
 submodule-per-competition setup).
 
-- `src/` — pipeline code, see the plan below for what lives where.
+- `src/` — pipeline code, see the plan below for what lives where. **Only the modules in
+  `src/` itself are on the active path** (the Gemini whole-image-primary route that produced
+  public AURC 0.02382).
+- `src/old/` — code that is no longer on that path: the classical OCR pipeline, the Danish
+  recognizer fine-tune tooling, one-off EDA/inspection scripts, the manual annotation apps, and
+  the closed confidence experiments (`experiment_confidence_grid`, `consensus_text`, the
+  `analyze_*` miners). Moved there 2026-08-24, nothing deleted, tests still run against
+  `src.old.<module>`. `src/old/README.md` says what each group was for and how it ended.
+  **Caveat for Kaggle runs:** the `museumscat-gemini-code` dataset is built from `src/*.py`
+  flattened, so `src/old/` is *not* shipped — a notebook that needs one of those modules has to
+  copy it in explicitly.
 - `data/raw/`, `data/processed/`, `models/` — **gitignored**. Images (6.9GB, 3500 files)
   and anything derived from them never go to GitHub, per explicit instruction for this
   competition (unlike bayesian-kaggle, which does commit `data/raw/`). Re-download with

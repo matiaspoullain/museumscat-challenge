@@ -120,7 +120,7 @@ def fit_multi_feature_calibrator(rows, correctness_values, feature_order=FEATURE
 
     regularization="l1" (Lasso) does feature selection -- zeroing out
     uninformative coefficients -- instead of L2's shrink-everything-toward-zero,
-    which src.experiment_confidence_grid's "logistic_multi_l1" arm tests as an
+    which src.old.experiment_confidence_grid's "logistic_multi_l1" arm tests as an
     alternative way to fight overfitting on ~200 dev rows with 19 columns,
     without reducing to a black-box representation the way PCA would. L1 needs
     "liblinear" (the default "lbfgs" solver doesn't support it)."""

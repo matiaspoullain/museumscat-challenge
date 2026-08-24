@@ -5,7 +5,7 @@ fine-tune. See
 docs/superpowers/specs/2026-07-29-card-word-boxes-danish-finetune-design.md.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.box_card_words_app
+    conda run -n museumscat-challenge python -m src.old.box_card_words_app
 Then open http://localhost:8767 in a browser (WSL2 forwards localhost to
 Windows automatically).
 """

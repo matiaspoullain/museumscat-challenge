@@ -1,3 +1,9 @@
+"""EDA: segunda pasada de revision visual de la ROI, sobre otra muestra de train.
+
+Variante de `src.old.review_detections` usada para re-chequear la deteccion tras
+ajustar sus constantes. Script de inspeccion manual.
+"""
+
 import csv
 import os
 

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.analyze_confidence_errors import high_confidence_errors
+from src.old.analyze_confidence_errors import high_confidence_errors
 
 
 def test_high_confidence_errors_filters_and_sorts_by_confidence_descending():

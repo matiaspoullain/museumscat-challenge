@@ -1,7 +1,7 @@
 """Score OCR engine/recognizer choices on real dev-set images: per-field NED + AURC.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.score_ocr_dev <engine> [n_images]
+    conda run -n museumscat-challenge python -m src.old.score_ocr_dev <engine> [n_images]
 
 This is an approximation, not the final Task 7 submission pipeline -- just
 enough signal to compare OCR engine/recognizer configs quantitatively
@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from src.benchmark_ocr import ENGINES
+from src.old.benchmark_ocr import ENGINES
 from src.classify_field import classify_field
 from src.detect_labels import _deskew, find_search_roi
 from src.metrics import aurc, best_pipe_ned

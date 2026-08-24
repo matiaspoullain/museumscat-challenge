@@ -1,4 +1,4 @@
-from src.split_reco_dataset_v2 import split_labels
+from src.old.split_reco_dataset_v2 import split_labels
 
 
 def test_split_is_deterministic_and_covers_all_labels():

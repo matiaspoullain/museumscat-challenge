@@ -1,10 +1,10 @@
 """Build a word-level image+label training set for the doctr recognizer
 fine-tune from data/processed/card_crops/word_boxes.json (produced by
-src.box_card_words_app). See
+src.old.box_card_words_app). See
 docs/superpowers/specs/2026-07-29-card-word-boxes-danish-finetune-design.md.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.build_word_crop_dataset
+    conda run -n museumscat-challenge python -m src.old.build_word_crop_dataset
 """
 import json
 import os

@@ -1,10 +1,10 @@
-"""Mining companion to src.analyze_gemini_errors: instead of text-diff
+"""Mining companion to src.old.analyze_gemini_errors: instead of text-diff
 patterns, finds (specimen, field) pairs where confidence is high but the
 transcription is still wrong -- the cases AURC punishes hardest, and the
 evidence behind src.confidence_penalty_rules' fixed penalty.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.analyze_confidence_errors
+    conda run -n museumscat-challenge python -m src.old.analyze_confidence_errors
 """
 import os
 

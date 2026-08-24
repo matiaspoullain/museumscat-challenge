@@ -4,7 +4,7 @@ which found it separates informative from confound card crops far better than
 the keyword-based src.classify_card_relevance (0.870 vs 0.505 cross-validated
 accuracy). This module turns that into a crop_filename -> bool lookup for the
 200 train.csv (dev) specimens, for plugging into src.pipeline via
-src.evaluate_local, so the pipeline-level AURC/NED impact can be measured
+src.old.evaluate_local, so the pipeline-level AURC/NED impact can be measured
 directly instead of just the classifier's own accuracy.
 
 Leakage note: a labeled crop's flag is its out-of-fold cross-validated

@@ -1,3 +1,11 @@
+"""Pipeline clasico de extremo a extremo: palabras OCR -> lineas -> campos -> especimen.
+
+Agrupa las palabras reconocidas en lineas (`src.reconstruct_lines`), clasifica
+cada linea en date/locality (`src.classify_field`) y fusiona las tarjetas de un
+especimen (`src.merge_records`). Sigue en la ruta activa porque los cargadores de
+manifiesto/predicciones y `process_specimen` los reutiliza la ruta Gemini.
+"""
+
 import csv
 
 from src.classify_field import classify_field

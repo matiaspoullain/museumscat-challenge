@@ -1,3 +1,9 @@
+"""EDA: genera una grilla de fotos de especimenes muestreadas al azar.
+
+Salida en `tables_figures/eda/layout_grid.png`, para inspeccionar a ojo como
+estan dispuestas las etiquetas dentro de la foto. Script de un solo uso.
+"""
+
 import os
 import random
 

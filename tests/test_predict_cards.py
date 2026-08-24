@@ -1,4 +1,4 @@
-from src.predict_cards import rows_from_result
+from src.old.predict_cards import rows_from_result
 
 
 class FakeWord:

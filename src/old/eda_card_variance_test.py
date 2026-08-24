@@ -11,7 +11,7 @@ finalized search ROI (src.detect_labels.get_search_crop) rather than the
 whole image.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.eda_card_variance_test
+    conda run -n museumscat-challenge python -m src.old.eda_card_variance_test
 
 Output: tables_figures/eda/card_detection_variance_test/<image_file> --
 for each sample, stacked panels: annotated crop (red = candidate card box)

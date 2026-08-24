@@ -1,3 +1,10 @@
+"""Descarga los datos de la competencia y las paginas de descripcion de Kaggle.
+
+Deja las imagenes y CSVs en `data/raw/` (gitignored) y escribe
+`kaggle_meta/pages/*.md` + `kaggle_meta/files_metadata.json` (si commiteados).
+Punto de entrada: `python -m src.download_kaggle_data`.
+"""
+
 import csv, json, os, re, zipfile
 
 COMPETITION = "museumscat-specimen-collection-annotation-task"

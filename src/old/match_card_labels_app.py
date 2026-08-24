@@ -5,7 +5,7 @@ training pairs for a future doctr fine-tune. See
 docs/superpowers/specs/2026-07-28-card-label-matching-design.md.
 
 Usage:
-    conda run -n museumscat-challenge python -m src.match_card_labels_app
+    conda run -n museumscat-challenge python -m src.old.match_card_labels_app
 Then open http://localhost:8766 in a browser (WSL2 forwards localhost to
 Windows automatically).
 """
