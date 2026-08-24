@@ -225,7 +225,8 @@ Explored whether a genuinely independent model — Qwen2.5-VL-7B-Instruct,
 — could serve as a second confidence "vote" alongside Gemini's self-consistency
 (whose 3 samples come from one model, so its errors are correlated with each
 other). Full writeup: `docs/superpowers/plans/2026-08-19-local-vlm-second-opinion-spike.md`.
-Branch `spike/kaggle-vlm-second-opinion` (kept for reference, not merged).
+Branch `spike/kaggle-vlm-second-opinion` was deleted 2026-08-24 along with every other
+unadopted branch; the writeup above is the record.
 
 **Result: the correlation is real but doesn't translate into a usable AURC
 improvement.** At full dev-set scale (124 single-card + 71 whole-image
@@ -257,8 +258,8 @@ Explored extending the whole-image fallback (which today only fires when a
 specimen has *both* fields `MISSING` after the per-card pass) to specimens
 with *exactly one* field `MISSING` — 514/3300 test specimens qualify. Full
 writeup: `docs/superpowers/plans/2026-08-19-partial-missing-wholeimage-
-fallback-spike.md`. Branch `experiment/wholeimage-partial-missing` (kept
-for reference, not merged).
+fallback-spike.md` (rescued onto the main line before its branch,
+`experiment/wholeimage-partial-missing`, was deleted 2026-08-24).
 
 **Result: dev-set and test-set MISSING-rate signals were positive, but two
 different confidence designs both made the real Kaggle submission worse —
@@ -308,7 +309,8 @@ wholeimage-archive`, in case this is revisited without re-spending quota.
 ## Status (2026-08-20): confidence rank refinement (Track A + A3) — shipped, public AURC 0.06007 → 0.04423
 
 Full writeup: `docs/superpowers/plans/2026-08-20-confidence-rank-refinement.md`. Branch
-`experiment/confidence-rank-refinement`.
+`experiment/confidence-rank-refinement` (since deleted; merged into main via
+`research/improve-predictions-2026-08-21`).
 
 The 2026-08-07 "calibration is exhausted" finding (AURC only depends on confidence *rank*, so
 any monotone reshaping of a single scalar is provably inert) was correct but incomplete: with
@@ -389,7 +391,7 @@ was actually +0.00004 on the full set) is the explicit reason why.
 ## Status (2026-08-23): whole-image-primary route — SHIPPED, public AURC 0.04423 → 0.02530
 
 Full writeup: `docs/superpowers/plans/2026-08-21-transcription-quality-push.md`. Branch
-`research/improve-predictions-2026-08-21`.
+`research/improve-predictions-2026-08-21`, merged to `main` 2026-08-24.
 
 **The finding that motivated this round.** Replacing confidence with a *perfect* (oracle) global
 ranking over the shipped text gives dev AURC 0.0127 — but the public leaderboard's top five were
@@ -470,11 +472,17 @@ D4), and the rank layer re-measured on the new route (Phase 6, same day). Curren
    0.0265 dev gap to the oracle floor, so the remaining ranking headroom is information the
    current signals do not carry, not a weighting problem. Do not re-propose tuning this layer.
    See the plan doc's Phase 7 for the tables (including two hypotheses it falsified).
-3. **Text quality on the partial-agreement group — now the main remaining lever.** Stage 1 of Phase 6 identified it as the
-   worst of the four groups in both fields (date 0.1294, locality 0.2195 mean NED) — 25 and 45
-   dev specimens where the two routes read the same card differently. That is a mined,
-   already-localized error population, which is how this repo prefers to start
-   (`src/clean_gemini_predictions.py`'s docstring), rather than a speculative fix.
+3. **~~Text quality on the partial-agreement group~~ — arbitrated 2026-08-24, population closed.**
+   A third Gemini pass adjudicated the 63 disputed dev specimens (spec
+   `docs/superpowers/specs/2026-08-24-partial-agreement-arbitration-design.md`). Locality NED on
+   the mined population fell 15.3%, but full-dev AURC moved only −0.00044 (CI includes 0), and
+   **transcribing every disputed field perfectly is worth just −0.00280** — the whole population's
+   ceiling, measured. Not adopted, and the 1,041-call test pass was never run.
+   **The generalizable lesson: "worst mean NED" is the wrong way to pick a text target under
+   AURC.** These rows are already ranked at the bottom, so the risk-coverage curve already excuses
+   them. A text target has to be wrong *and currently trusted* — which is why D4 paid −42.8%
+   (it improved text everywhere, including the high-confidence rows that dominate the curve) and
+   this paid nothing.
 4. **`kaggle competitions submit` stays a deliberate, user-triggered action** — 10/day, 2 final,
    ends 2026-08-31. Never from a script or without explicit instruction.
 5. **Two standing methodology rules, both learned the expensive way.** Score the **full** 200-row
@@ -482,6 +490,25 @@ D4), and the rank layer re-measured on the new route (Phase 6, same day). Curren
    0.0281→0.0166 and was actually +0.00004 on the full set; AURC is a global rank metric). And
    treat a dev delta as a **direction-and-significance test, not a magnitude estimate** — D4's
    public gain was 1.6x its dev projection while Phase 6's was 0.6x it.
+
+## Branches (cleaned up 2026-08-24)
+
+**Everything adopted lives on `main`.** `research/improve-predictions-2026-08-21` — which carried
+the whole-image-primary route (D4, 0.02530) and the risk-ordered route tiers (Phase 6, 0.02382) —
+was fast-forwarded into `main` on 2026-08-24, and every unadopted branch was deleted the same day:
+`experiment/rank-param-sweep-2026-08-24`, `experiment/partial-agreement-arbitration`,
+`experiment/wholeimage-partial-missing`, `spike/kaggle-vlm-second-opinion`,
+`experiment/confidence-rank-refinement`, and the stale remote `gemini-vlm-transcription`.
+
+**The findings survive, the code does not.** Every deleted branch's writeup was rescued onto the
+main line first (`docs/superpowers/plans/` and `specs/`), because what stops a dead end from being
+re-proposed is the measurement, not the implementation. Four rounds now have ended in "measured,
+not adopted" — the partial-MISSING fallback, the local-VLM blend, the constant sweep, and
+arbitration — and in each case the numbers are the deliverable.
+
+The practical consequence: `src/` on `main` is exactly the code that produced the best submitted
+result (public AURC 0.02382). Anything a doc describes that is not in `src/` was deliberately
+dropped, not lost.
 
 ## Repo structure
 
@@ -515,12 +542,12 @@ submodule-per-competition setup).
   `2026-08-19-local-vlm-second-opinion-spike.md` (local Qwen2.5-VL-7B on Kaggle GPU as an
   independent second confidence signal — not adopted *as a blend/gate*, see its "Outcome"; kept
   as a record of a real-but-then-unusable correlation and the Kaggle multi-GPU debugging journey
-  to get there, on branch `spike/kaggle-vlm-second-opinion`) →
+  to get there; its branch has since been deleted) →
   `2026-08-20-confidence-rank-refinement.md` (**read this one for anything current** — the
   tie-breaking headroom finding, the shipped confidence rank refinement taking dev AURC
   0.0715 → 0.0575/0.0493, re-purposes the local-VLM spike above as a within-tier signal
   instead of a blend, and the Track B text-consensus techniques that were evaluated but not
-  adopted; branch `experiment/confidence-rank-refinement`).
+  adopted; its branch has since been deleted, the work is on `main`).
 - `tables_figures/eda/` — EDA outputs (grids, notes). Small/committed unless it's a
   derived-from-raw-images preview, in which case gitignore it.
 
