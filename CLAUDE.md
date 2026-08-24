@@ -457,10 +457,10 @@ The earlier list is fully discharged: the confidence config was wired (2026-08-0
 submission generated (2026-08-18), `verbatimLocality` text quality attacked (the 2026-08-21 push,
 D4), and the rank layer re-measured on the new route (Phase 6, same day). Current state:
 
-1. **Mark the 2 final submissions.** Seven submissions exist (0.60501, 0.06007, 0.06105, 0.06263,
-   0.05073, 0.04423, 0.02530, 0.02382) and **none has been marked final** — a separate,
-   irreversible action on Kaggle's side that the CLI does not do. Worth doing before the
-   2026-08-31 deadline rather than at it. The obvious pick today is ref `55722819` (0.02382).
+1. **~~Mark the 2 final submissions~~ — done 2026-08-24 (user-performed, on Kaggle's site).**
+   Eight submissions exist (0.60501, 0.06007, 0.06105, 0.06263, 0.05073, 0.04423, 0.02530,
+   0.02382); the final selection is now locked in. Nothing about it is reversible or checkable
+   from the CLI, so do not attempt to re-do or verify it.
 2. **~~Ranking levers~~ — swept 2026-08-24, exhausted.** Both unexplored levers
    (`src.route_agreement.ROUTE_TIERS`' `partial_scale` and the equal-weight averaging of the
    within-tier signals) were measured on the full dev set on branch
