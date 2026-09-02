@@ -37,10 +37,18 @@ performs an order of magnitude better. The classical pipeline's code/tests/docs
 and earlier) still exist and pass their tests, but aren't the active path — read the
 Gemini-specific docs below for current work, not the classical-pipeline plans.
 
-**Current best *submitted* result:** public Kaggle AURC **0.02382**
+**Competition ended 2026-08-31. Final result: private leaderboard AURC 0.02345, rank 15th of
+127 teams.** See the 2026-09-02 Status section near the end of this file for the full result
+and how it was read off Kaggle.
+
+**Best *submitted* result during the competition:** public Kaggle AURC **0.02382**
 (`submission_gemini_wholeimage_primary.csv`, ref `55722819`, submitted 2026-08-23) — the
 **whole-image-primary route** (which replaced the per-card SAM-crop route as the text source)
-plus **risk-ordered route tiers**. Rank 10th. See the 2026-08-23 Status sections below.
+plus **risk-ordered route tiers**. This is also the submission that ended up scoring best on
+the private leaderboard (0.02345) and decided the final rank. Rank 10th on the public board at
+submission time (the public board kept moving as other teams submitted through 2026-08-31; see
+below for the final private-leaderboard rank). See the 2026-08-23 Status sections below for how
+it was built.
 
 Full submission history: `submission.csv` (classical pipeline) 0.60501 → `submission_gemini.csv`
 0.06007 → `submission_gemini_rank_refined.csv` (Track A) 0.05073 →
@@ -526,6 +534,29 @@ checked against the code, not written from the narrative: it deliberately exclud
 `src/run_gemini_test_wholeimage.py` and `src/confidence_penalty_rules.py`, because
 `generate_wholeimage_primary_submission` reads neither — both belong to the earlier variants
 only.
+
+## Status (2026-09-02): competition ended — final result
+
+MuseumSCAT ended 2026-08-31. Final standings read via `kaggle competitions leaderboard -c
+museumscat-specimen-collection-annotation-task -s` (this command returns the **private**
+leaderboard once a competition is over — its per-team `score` matches the `privateScore`
+column `kaggle competitions submissions` had already been showing all along, e.g. exactly
+0.02345 for ref `55722819`; `kaggle competitions leaderboard -d` instead always downloads the
+`publicleaderboard.csv` artifact, i.e. the pre-deadline public split, which is a different,
+now-frozen number (0.02382, rank 17th) — don't confuse the two files):
+
+**Final private-leaderboard AURC: 0.02345 — rank 15th of 127 teams.**
+
+The score comes from submission ref `55722819` (`submission_gemini_wholeimage_primary.csv`,
+whole-image-primary route + risk-ordered route tiers, public 0.02382) — one of the two
+submissions marked final on 2026-08-24. Its private score (0.02345) beat the other marked
+final's (ref `55721990`, private 0.02414), so Kaggle's "best of your two finals" rule picked it
+automatically; no action needed on our end. Notably this is the *exploratory* Phase 6 submission
+whose dev-set 90% CI had included 0 (not a confirmed win at submission time) — it turned out to
+be the better of the two on the real private split anyway.
+
+Nothing further is actionable here: submissions are closed, the leaderboard is final, and this
+section is the closing record of the competition for this repo.
 
 ## Branches (cleaned up 2026-08-24)
 
