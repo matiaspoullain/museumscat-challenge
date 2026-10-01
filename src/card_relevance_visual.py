@@ -20,6 +20,8 @@ Usage:
 import csv
 import json
 import os
+from collections.abc import Iterable
+from typing import cast
 
 import cv2
 import numpy as np
@@ -33,6 +35,7 @@ from src.eda_card_visual_features import (
     MATCHES_PATH,
     N_FOLDS,
     RANDOM_STATE,
+    FeatureRow,
     _load_labeled_crops,
     build_feature_table,
     extract_features,
@@ -43,8 +46,8 @@ TRAIN_CSV_PATH = os.path.join("data", "raw", "train.csv")
 TEST_RELEVANCE_CACHE_PATH = os.path.join("data", "processed", "gemini", "test_relevance_flags.csv")
 
 
-def _all_crops_by_specimen(manifest_path):
-    by_image = {}
+def _all_crops_by_specimen(manifest_path: str) -> dict[str, list[str]]:
+    by_image: dict[str, list[str]] = {}
     with open(manifest_path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             specimen = os.path.splitext(row["source_image_file"])[0]
@@ -52,11 +55,11 @@ def _all_crops_by_specimen(manifest_path):
     return by_image
 
 
-def _feature_matrix(rows):
+def _feature_matrix(rows: list[FeatureRow]) -> np.ndarray:
     return np.array([[row[name] for name in FEATURE_NAMES] for row in rows], dtype=float)
 
 
-def _load_labeled_features():
+def _load_labeled_features() -> tuple[list[FeatureRow], np.ndarray, np.ndarray]:
     with open(MATCHES_PATH, encoding="utf-8") as f:
         matches = json.load(f)
     labeled_rows = build_feature_table(_load_labeled_crops(matches))
@@ -65,7 +68,7 @@ def _load_labeled_features():
     return labeled_rows, x_labeled, y_labeled
 
 
-def train_full_model():
+def train_full_model() -> RandomForestClassifier:
     """Random forest fit on every labeled crop (all 323, "skipped" excluded).
     Safe to apply to any crop that wasn't part of that labeled set -- e.g. the
     3300 test.csv specimens, none of which have ever been labeled."""
@@ -75,7 +78,7 @@ def train_full_model():
     return model
 
 
-def _predict_crop(model, crop_filename):
+def _predict_crop(model: RandomForestClassifier, crop_filename: str) -> bool:
     image_bgr = cv2.imread(os.path.join(IMAGES_DIR, crop_filename))
     if image_bgr is None:
         return True  # fail open: unreadable crop, don't drop it silently
@@ -84,8 +87,9 @@ def _predict_crop(model, crop_filename):
     return bool(model.predict(x)[0])
 
 
-def compute_relevance_flags_for_specimens(specimens, model=None, manifest_path=MANIFEST_PATH,
-                                           images_dir=IMAGES_DIR, progress_every=500):
+def compute_relevance_flags_for_specimens(specimens: Iterable[str], model: RandomForestClassifier | None = None,
+                                          manifest_path: str = MANIFEST_PATH, images_dir: str = IMAGES_DIR,
+                                          progress_every: int | None = 500) -> dict[str, bool]:
     """crop_filename -> bool for every card crop belonging to `specimens`
     (specimen ids, no extension), all predicted fresh by `model` (trained via
     train_full_model() if not given). Meant for specimens with no relevance
@@ -106,7 +110,7 @@ def compute_relevance_flags_for_specimens(specimens, model=None, manifest_path=M
     crop_filenames = [crop_filename for specimen in specimens for crop_filename in by_image.get(specimen, [])]
     total = len(crop_filenames)
 
-    features_by_crop = {}
+    features_by_crop: dict[str, FeatureRow] = {}
     for i, crop_filename in enumerate(crop_filenames, start=1):
         image_bgr = cv2.imread(os.path.join(images_dir, crop_filename))
         if image_bgr is not None:
@@ -114,7 +118,7 @@ def compute_relevance_flags_for_specimens(specimens, model=None, manifest_path=M
         if progress_every and i % progress_every == 0:
             print(f"[relevance] extracted features for {i}/{total} crops...", flush=True)
 
-    predicted_by_crop = {}
+    predicted_by_crop: dict[str, bool] = {}
     if features_by_crop:
         x = _feature_matrix(list(features_by_crop.values()))
         predictions = model.predict(x)
@@ -125,14 +129,14 @@ def compute_relevance_flags_for_specimens(specimens, model=None, manifest_path=M
     return {crop_filename: predicted_by_crop.get(crop_filename, True) for crop_filename in crop_filenames}
 
 
-def _load_relevance_cache(cache_path):
+def _load_relevance_cache(cache_path: str) -> dict[str, bool]:
     if not os.path.exists(cache_path):
         return {}
     with open(cache_path, encoding="utf-8") as f:
         return {row["crop_filename"]: row["is_relevant"] == "True" for row in csv.DictReader(f)}
 
 
-def _save_relevance_cache(cache_path, flags):
+def _save_relevance_cache(cache_path: str, flags: dict[str, bool]) -> None:
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     with open(cache_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["crop_filename", "is_relevant"])
@@ -141,8 +145,10 @@ def _save_relevance_cache(cache_path, flags):
             writer.writerow({"crop_filename": crop_filename, "is_relevant": is_relevant})
 
 
-def load_or_compute_relevance_flags(specimens, cache_path, model=None, manifest_path=MANIFEST_PATH,
-                                     images_dir=IMAGES_DIR, progress_every=500):
+def load_or_compute_relevance_flags(specimens: Iterable[str], cache_path: str,
+                                    model: RandomForestClassifier | None = None,
+                                    manifest_path: str = MANIFEST_PATH, images_dir: str = IMAGES_DIR,
+                                    progress_every: int | None = 500) -> dict[str, bool]:
     """Like compute_relevance_flags_for_specimens, but persists the result to
     cache_path (crop_filename,is_relevant CSV) so a later re-run -- e.g. the
     next day's src.run_gemini_test invocation, resuming after a daily quota
@@ -171,7 +177,7 @@ def load_or_compute_relevance_flags(specimens, cache_path, model=None, manifest_
     return flags
 
 
-def compute_dev_relevance_flags(dev_specimens):
+def compute_dev_relevance_flags(dev_specimens: Iterable[str]) -> dict[str, bool]:
     """crop_filename -> bool for every card crop belonging to `dev_specimens`
     (specimen ids, no extension). Labeled crops get their out-of-fold
     cross-validated prediction (never produced by a model trained on that
@@ -183,7 +189,7 @@ def compute_dev_relevance_flags(dev_specimens):
     oof_pred = cross_val_predict(
         RandomForestClassifier(n_estimators=200, random_state=RANDOM_STATE), x_labeled, y_labeled, cv=cv
     )
-    flags = {row["crop_filename"]: bool(pred) for row, pred in zip(labeled_rows, oof_pred)}
+    flags = {cast(str, row["crop_filename"]): bool(pred) for row, pred in zip(labeled_rows, oof_pred)}
 
     full_model = RandomForestClassifier(n_estimators=200, random_state=RANDOM_STATE)
     full_model.fit(x_labeled, y_labeled)
@@ -196,7 +202,7 @@ def compute_dev_relevance_flags(dev_specimens):
     return flags
 
 
-def main():
+def main() -> None:
     train_df = pd.read_csv(TRAIN_CSV_PATH)
     dev_specimens = {os.path.splitext(f)[0] for f in train_df["image_file"]}
     flags = compute_dev_relevance_flags(dev_specimens)

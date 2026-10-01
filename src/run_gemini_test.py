@@ -28,7 +28,7 @@ TEST_CSV_PATH = os.path.join("data", "raw", "test.csv")
 OUTPUT_PATH = os.path.join("data", "processed", "gemini", "test_card_predictions.csv")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-samples", type=int, default=3,
                          help="self-consistency samples per card (default 3)")

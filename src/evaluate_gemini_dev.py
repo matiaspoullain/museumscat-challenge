@@ -34,6 +34,7 @@ from src.local_vlm_signal import (
     local_vlm_agreement_score,
 )
 from src.locality_corpus import build_locality_corpus
+from src.merge_records import FieldScores
 from src.metrics import aurc, best_pipe_ned
 from src.pipeline import load_manifest
 
@@ -48,8 +49,8 @@ BASELINE_AURC = {"verbatimDate": 0.538, "verbatimLocality": 0.613}
 BASELINE_OVERALL_AURC = 0.576
 
 
-def _errors_by_field(merged, ground_truth_df):
-    errors = {field: [] for field in FIELD_IS_DATE}
+def _errors_by_field(merged: dict[str, FieldScores], ground_truth_df: pd.DataFrame) -> dict[str, list[float]]:
+    errors: dict[str, list[float]] = {field: [] for field in FIELD_IS_DATE}
     for _, row in ground_truth_df.iterrows():
         for field, is_date in FIELD_IS_DATE.items():
             text, _ = merged[row["image_file"]][field]
@@ -57,9 +58,10 @@ def _errors_by_field(merged, ground_truth_df):
     return errors
 
 
-def _print_report(label, errors_by_field, confidences_by_field):
+def _print_report(label: str, errors_by_field: dict[str, list[float]],
+                  confidences_by_field: dict[str, list[float]]) -> float:
     print(f"--- {label} ---")
-    aurcs = {}
+    aurcs: dict[str, float] = {}
     for field in FIELD_IS_DATE:
         field_aurc = aurc(errors_by_field[field], confidences_by_field[field])
         aurcs[field] = field_aurc
@@ -73,7 +75,7 @@ def _print_report(label, errors_by_field, confidences_by_field):
     return overall
 
 
-def main():
+def main() -> None:
     ground_truth_df = pd.read_csv(TRAIN_CSV_PATH)
     manifest_by_image = load_manifest(MANIFEST_PATH)
     predictions_by_crop = load_predictions_by_crop()
@@ -105,7 +107,7 @@ def main():
     _print_report("raw confidence + cleanup + whole-image fallback",
                   fallback_errors_by_field, fallback_confidences)
 
-    penalized_confidences = {field: [] for field in FIELD_IS_DATE}
+    penalized_confidences: dict[str, list[float]] = {field: [] for field in FIELD_IS_DATE}
     for field in FIELD_IS_DATE:
         for _, row in ground_truth_df.iterrows():
             n_processed, n_contributing = count_processed_and_contributing(
@@ -133,7 +135,7 @@ def main():
     soft_merged = clean_merged_predictions(apply_wholeimage_fallback(soft_merged, wholeimage_predictions))
     locality_corpus = build_locality_corpus()
 
-    rank_refined_confidences = {field: [] for field in FIELD_IS_DATE}
+    rank_refined_confidences: dict[str, list[float]] = {field: [] for field in FIELD_IS_DATE}
     for field in FIELD_IS_DATE:
         for _, row in ground_truth_df.iterrows():
             image_file = row["image_file"]
@@ -163,7 +165,7 @@ def main():
         local_merged = merge_predictions_by_specimen(
             local_predictions_by_crop, manifest_by_image, ground_truth_df["image_file"].tolist()
         )
-        with_local_vlm_confidences = {field: [] for field in FIELD_IS_DATE}
+        with_local_vlm_confidences: dict[str, list[float]] = {field: [] for field in FIELD_IS_DATE}
         for field in FIELD_IS_DATE:
             for i, (_, row) in enumerate(ground_truth_df.iterrows()):
                 image_file = row["image_file"]

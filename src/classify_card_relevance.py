@@ -11,6 +11,7 @@ Usage:
 import csv
 import json
 import os
+from typing import TypedDict
 
 from src.classify_field import classify_field
 
@@ -19,14 +20,21 @@ PREDICTIONS_PATH = os.path.join("data", "processed", "card_crops", "predictions.
 OUTPUT_PATH = os.path.join("data", "processed", "card_crops", "predictions_with_relevance.csv")
 
 
-def is_relevant_card(words):
+class CardMatch(TypedDict):
+    """The subset of a card_text_matches.json entry read here (it also holds "selections")."""
+
+    status: str
+
+
+def is_relevant_card(words: list[str]) -> bool:
     """words: list of recognized text snippets on one card. True if any of
     them classifies as date or locality (i.e. not confound) -- an empty
     list is never relevant."""
     return any(classify_field(word) != "confound" for word in words)
 
 
-def evaluate(predictions_by_card, matches):
+def evaluate(predictions_by_card: dict[str, list[str]],
+             matches: dict[str, CardMatch]) -> tuple[float, float, float]:
     """predictions_by_card: crop_filename -> list of recognized words.
     matches: card_text_matches.json dict. Returns (precision, recall,
     accuracy) of is_relevant_card against ground truth over every card
@@ -53,24 +61,25 @@ def evaluate(predictions_by_card, matches):
     return precision, recall, accuracy
 
 
-def _load_predictions_by_card():
+def _load_predictions_by_card() -> dict[str, list[str]]:
     """Group predictions.csv's per-word rows into crop_filename -> list of
     recognized word strings."""
-    predictions_by_card = {}
+    predictions_by_card: dict[str, list[str]] = {}
     with open(PREDICTIONS_PATH, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             predictions_by_card.setdefault(row["crop_filename"], []).append(row["predicted_text"])
     return predictions_by_card
 
 
-def apply_to_all():
+def apply_to_all() -> int:
     """Add a 'relevant' column to every row of predictions.csv, writing
     OUTPUT_PATH. Returns the number of rows written."""
     predictions_by_card = _load_predictions_by_card()
     with open(PREDICTIONS_PATH, encoding="utf-8") as f_in:
         reader = csv.DictReader(f_in)
         rows = list(reader)
-        fieldnames = reader.fieldnames + ["relevant"]
+        # fieldnames is None for an empty file; not guarded here.
+        fieldnames = reader.fieldnames + ["relevant"]  # type: ignore[operator]
 
     for row in rows:
         row["relevant"] = is_relevant_card(predictions_by_card.get(row["crop_filename"], []))

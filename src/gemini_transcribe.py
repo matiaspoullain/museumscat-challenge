@@ -18,10 +18,12 @@ import collections
 import json
 import re
 import time
+from collections.abc import Callable
 
 from google import genai
 from google.genai import types
 
+from src.merge_records import FieldScores
 from src.metrics import ned
 
 # "gemini-2.5-flash" (this project's original choice) returns 404 for new API
@@ -38,6 +40,9 @@ from src.metrics import ned
 MODEL_FALLBACK_ORDER = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
 DEFAULT_MODEL = MODEL_FALLBACK_ORDER[0]
 FIELDS = ("verbatimDate", "verbatimLocality")
+
+# One Gemini response: {field: text} for each of FIELDS.
+FieldValues = dict[str, str]
 
 # One card crop per call (multi-card joining happens downstream via
 # src.merge_records), so the prompt only needs single-card confound rules --
@@ -157,11 +162,11 @@ class RateLimiter:
     limits in the first place, which matters when free-tier daily quota is the
     scarce resource."""
 
-    def __init__(self, max_calls_per_minute):
+    def __init__(self, max_calls_per_minute: int) -> None:
         self.max_calls_per_minute = max_calls_per_minute
-        self._call_times = collections.deque()
+        self._call_times: collections.deque[float] = collections.deque()
 
-    def wait(self):
+    def wait(self) -> None:
         now = time.monotonic()
         while self._call_times and now - self._call_times[0] >= 60:
             self._call_times.popleft()
@@ -179,7 +184,7 @@ class RateLimiter:
 REQUEST_TIMEOUT_MS = 120_000
 
 
-def build_client(api_key):
+def build_client(api_key: str | None) -> genai.Client:
     # Short retry budget: a daily-quota 429 won't resolve by retrying the same
     # model within seconds, so we want it to surface quickly and let
     # ModelRotation switch models rather than burn a minute of backoff first.
@@ -195,7 +200,7 @@ def build_client(api_key):
     )
 
 
-def _parse_response_json(text):
+def _parse_response_json(text: str) -> FieldValues:
     match = re.search(r"\{.*\}", text.strip(), re.DOTALL)
     if not match:
         raise ValueError(f"no JSON object found in Gemini response: {text!r}")
@@ -206,13 +211,16 @@ def _parse_response_json(text):
     }
 
 
-def call_gemini_once(client, image_bytes, mime_type="image/jpeg", model=DEFAULT_MODEL,
-                      temperature=0.7, rate_limiter=None, prompt=PROMPT):
+def call_gemini_once(client: genai.Client, image_bytes: bytes, mime_type: str = "image/jpeg",
+                      model: str = DEFAULT_MODEL, temperature: float = 0.7,
+                      rate_limiter: RateLimiter | None = None, prompt: str = PROMPT) -> FieldValues:
     if rate_limiter is not None:
         rate_limiter.wait()
     response = client.models.generate_content(
         model=model,
-        contents=[
+        # camelCase "mimeType" isn't a key of the SDK's BlobDict stub, but its pydantic model
+        # accepts the alias at runtime.
+        contents=[  # type: ignore[arg-type]
             {"inline_data": {"data": image_bytes, "mimeType": mime_type}},
         ],
         config=types.GenerateContentConfig(
@@ -222,19 +230,20 @@ def call_gemini_once(client, image_bytes, mime_type="image/jpeg", model=DEFAULT_
             response_json_schema=RESPONSE_SCHEMA,
         ),
     )
-    return _parse_response_json(response.text)
+    # response.text is None when Gemini returns no text part; not guarded here.
+    return _parse_response_json(response.text)  # type: ignore[arg-type]
 
 
-def _normalize_for_matching(text):
+def _normalize_for_matching(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
-def self_consistency_scores(samples):
+def self_consistency_scores(samples: list[FieldValues]) -> FieldScores:
     """samples: list of {field: text} dicts from repeated calls at temperature > 0.
     Returns {field: (modal_text, agreement_fraction)} -- agreement_fraction is the
     share of samples matching the modal (case/whitespace-normalized) answer, used
     as raw (uncalibrated) confidence."""
-    scores = {}
+    scores: FieldScores = {}
     for field in FIELDS:
         texts = [sample[field] for sample in samples]
         counts = collections.Counter(_normalize_for_matching(t) for t in texts)
@@ -244,14 +253,14 @@ def self_consistency_scores(samples):
     return scores
 
 
-def soft_consistency_scores(samples):
+def soft_consistency_scores(samples: list[FieldValues]) -> FieldScores:
     """Like self_consistency_scores, but each field's confidence is the average
     similarity (1 - normalized edit distance) between every sample and the modal
     answer, instead of the fraction of samples that match it exactly. A sample
     that's a one-character OCR slip away from the modal answer ("1897" vs
     "1887") still counts as partial agreement here, rather than the zero credit
     self_consistency_scores' exact-match count would give it."""
-    scores = {}
+    scores: FieldScores = {}
     for field in FIELDS:
         texts = [sample[field] for sample in samples]
         counts = collections.Counter(_normalize_for_matching(t) for t in texts)
@@ -263,9 +272,12 @@ def soft_consistency_scores(samples):
     return scores
 
 
-def transcribe_card_with_confidence(image_bytes=None, api_key=None, n_samples=3,
-                                     model=DEFAULT_MODEL, temperature=0.7, mime_type="image/jpeg",
-                                     rate_limiter=None, call_fn=None):
+def transcribe_card_with_confidence(image_bytes: bytes | None = None, api_key: str | None = None,
+                                     n_samples: int = 3, model: str = DEFAULT_MODEL,
+                                     temperature: float = 0.7, mime_type: str = "image/jpeg",
+                                     rate_limiter: RateLimiter | None = None,
+                                     call_fn: Callable[[], FieldValues] | None = None,
+                                     ) -> tuple[FieldScores, list[FieldValues]]:
     """Returns (scores, samples) where scores is {field: (text, raw_confidence)}
     (the same shape src.merge_records.assemble_field expects a list of) and
     samples is the raw list of per-call dicts, kept for later recalibration
@@ -276,8 +288,9 @@ def transcribe_card_with_confidence(image_bytes=None, api_key=None, n_samples=3,
     if call_fn is None:
         client = build_client(api_key)
 
-        def call_fn():
-            return call_gemini_once(client, image_bytes, mime_type=mime_type, model=model,
+        def call_fn() -> FieldValues:
+            # image_bytes is only None when the caller also passes call_fn.
+            return call_gemini_once(client, image_bytes, mime_type=mime_type, model=model,  # type: ignore[arg-type]
                                      temperature=temperature, rate_limiter=rate_limiter)
 
     samples = [call_fn() for _ in range(n_samples)]

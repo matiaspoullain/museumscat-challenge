@@ -15,6 +15,7 @@ Consumed by:
   own full-resolution image file)
 """
 import os
+from typing import TypedDict
 
 import cv2
 import numpy as np
@@ -38,8 +39,22 @@ MIN_SOLIDITY = 0.7      # drop masks that don't fill their own bbox -- real card
                         # bridges two separate cards across a mount gap measured 0.46-0.49
 CONTAINMENT_THRESH = 0.7  # drop a mask mostly nested inside an already-kept larger one
 
+Box = tuple[int, int, int, int]  # (x1, y1, x2, y2)
 
-def configure_threads(n):
+
+class SamMask(TypedDict):
+    """The subset of a SamAutomaticMaskGenerator.generate() entry this module reads."""
+
+    segmentation: np.ndarray
+    area: int
+
+
+class _Candidate(TypedDict):
+    bbox: Box
+    bbox_area: int
+
+
+def configure_threads(n: int) -> None:
     """Cap torch's and OpenCV's intra-op CPU parallelism to n threads. SAM
     inference is CPU-bound (matmul/conv-heavy) and both libraries default to
     using every available core, so without this a run saturates the whole
@@ -49,14 +64,14 @@ def configure_threads(n):
     cv2.setNumThreads(n)
 
 
-def load_generator():
+def load_generator() -> SamAutomaticMaskGenerator:
     """Load the SAM ViT-B model (CPU) and return a SamAutomaticMaskGenerator."""
     sam = sam_model_registry["vit_b"](checkpoint=CHECKPOINT)
     sam.to("cpu")
     return SamAutomaticMaskGenerator(sam, points_per_side=POINTS_PER_SIDE)
 
 
-def downsample(crop_bgr):
+def downsample(crop_bgr: np.ndarray) -> tuple[np.ndarray, float]:
     """Resize a full-resolution ROI crop to TARGET_WIDTH for SAM. Returns
     (small_bgr, scale) where scale = small_width / original_width."""
     h, w = crop_bgr.shape[:2]
@@ -65,12 +80,12 @@ def downsample(crop_bgr):
     return small, scale
 
 
-def _bbox(mask_entry):
+def _bbox(mask_entry: SamMask) -> Box:
     ys, xs = np.where(mask_entry["segmentation"])
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
 
-def _overlap_frac(box_a, box_b, area_a):
+def _overlap_frac(box_a: Box, box_b: Box, area_a: int) -> float:
     """Fraction of box_a's area covered by the intersection with box_b."""
     ax1, ay1, ax2, ay2 = box_a
     bx1, by1, bx2, by2 = box_b
@@ -82,13 +97,13 @@ def _overlap_frac(box_a, box_b, area_a):
     return inter / area_a
 
 
-def select_card_masks(masks, image_shape):
+def select_card_masks(masks: list[SamMask], image_shape: tuple[int, ...]) -> list[Box]:
     """Filter raw SAM masks down to card-shaped candidates: drop the huge
     background mask, the thin foam-edge strip, tiny letter/noise fragments,
     and masks mostly nested inside an already-kept larger candidate."""
     roi_area = image_shape[0] * image_shape[1]
 
-    candidates = []
+    candidates: list[_Candidate] = []
     for m in masks:
         area_frac = m["area"] / roi_area
         if area_frac > MAX_AREA_FRAC or area_frac < MIN_AREA_FRAC:
@@ -105,7 +120,7 @@ def select_card_masks(masks, image_shape):
         candidates.append({"bbox": (x1, y1, x2, y2), "bbox_area": bbox_area})
 
     candidates.sort(key=lambda c: -c["bbox_area"])
-    kept = []
+    kept: list[_Candidate] = []
     for c in candidates:
         if any(_overlap_frac(c["bbox"], k["bbox"], c["bbox_area"]) > CONTAINMENT_THRESH for k in kept):
             continue
@@ -113,7 +128,7 @@ def select_card_masks(masks, image_shape):
     return [c["bbox"] for c in kept]
 
 
-def detect_cards(crop_bgr, generator):
+def detect_cards(crop_bgr: np.ndarray, generator: SamAutomaticMaskGenerator) -> list[Box]:
     """Detect card bounding boxes in a full-resolution search-ROI crop.
     Returns a list of (x1, y1, x2, y2) boxes in crop_bgr's own coordinates
     (SAM runs on a downsampled copy internally; boxes are scaled back up)."""
@@ -123,7 +138,7 @@ def detect_cards(crop_bgr, generator):
     small_boxes = select_card_masks(masks, small.shape[:2])
 
     h, w = crop_bgr.shape[:2]
-    full_boxes = []
+    full_boxes: list[Box] = []
     for (x1, y1, x2, y2) in small_boxes:
         fx1, fy1 = int(x1 / scale), int(y1 / scale)
         fx2, fy2 = int(x2 / scale), int(y2 / scale)

@@ -22,6 +22,8 @@ does not depend on which one is picked -- see the plan doc's D4 section for the
 table and for the honest bootstrap caveat (the end-to-end AURC interval lands just
 barely on the inconclusive side of the 90% bar; the text-NED interval excludes 0).
 """
+from collections.abc import Mapping
+
 from src.confidence_rank_rules import combine_tier_and_within_tier_score
 from src.locality_corpus import corpus_support_score
 from src.metrics import best_pipe_ned
@@ -29,11 +31,11 @@ from src.metrics import best_pipe_ned
 FIELD_IS_DATE = {"verbatimDate": True, "verbatimLocality": False}
 
 
-def _normalize(text):
+def _normalize(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
-def route_agreement_score(text_a, text_b, is_date):
+def route_agreement_score(text_a: str, text_b: str, is_date: bool) -> float:
     """[0,1]: 1 - normalized edit distance between two independent routes'
     readings of the same field.
 
@@ -88,13 +90,13 @@ def route_agreement_score(text_a, text_b, is_date):
 # AURC depends only on rank order, so these constants encode an ordering, not
 # fitted magnitudes; `partial_scale` is what pushes the partial-agreement
 # continuum below both MISSING groups.
-ROUTE_TIERS = {
+ROUTE_TIERS: dict[str, dict[str, float]] = {
     "verbatimDate": {"both_missing": 0.95, "one_missing": 0.75, "partial_scale": 0.5},
     "verbatimLocality": {"both_missing": 0.75, "one_missing": 0.55, "partial_scale": 0.5},
 }
 
 
-def route_tier_score(field, text, per_card_text):
+def route_tier_score(field: str, text: str, per_card_text: str) -> float:
     """Risk-ordered coarse tier for one field, from the two routes' readings.
 
     route_agreement_score is the raw agreement primitive; this is the ranking
@@ -113,8 +115,10 @@ def route_tier_score(field, text, per_card_text):
     return agreement * tiers["partial_scale"]
 
 
-def wholeimage_primary_confidence(field, text, per_card_text, locality_corpus=None,
-                                   local_vlm_agreement=None, per_card_confidence=None):
+def wholeimage_primary_confidence(field: str, text: str, per_card_text: str,
+                                  locality_corpus: Mapping[str, int] | None = None,
+                                  local_vlm_agreement: float | None = None,
+                                  per_card_confidence: float | None = None) -> float:
     """Confidence for one field of one specimen under the whole-image-primary
     route: the risk-ordered route tier as the coarse rank, with corpus support
     (locality only), local-VLM agreement and the per-card route's own
@@ -134,7 +138,7 @@ def wholeimage_primary_confidence(field, text, per_card_text, locality_corpus=No
     source and is otherwise unused by it.
     """
     base = route_tier_score(field, text, per_card_text)
-    extras = []
+    extras: list[float] = []
     if locality_corpus is not None and field == "verbatimLocality":
         extras.append(corpus_support_score(text, locality_corpus))
     if local_vlm_agreement is not None:

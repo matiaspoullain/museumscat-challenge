@@ -74,6 +74,7 @@ Usage (in submission-history order, worst to best):
         --local-vlm-predictions-path data/processed/gemini/test_local_vlm_card_predictions.csv
 """
 import os
+from collections.abc import Mapping
 
 import pandas as pd
 
@@ -96,6 +97,7 @@ from src.local_vlm_signal import (
 )
 from src.locality_corpus import DEFAULT_SOURCES as LOCALITY_CORPUS_DEFAULT_SOURCES
 from src.locality_corpus import build_locality_corpus
+from src.merge_records import FieldScores
 from src.pipeline import load_manifest
 from src.route_agreement import wholeimage_primary_confidence
 
@@ -137,10 +139,14 @@ TEST_WHOLEIMAGE_PRIMARY_PREDICTIONS_PATH = os.path.join(
 FIELDS = ("verbatimDate", "verbatimLocality")
 
 
-def build_submission_df(image_files, manifest_by_image, predictions_by_crop,
-                         wholeimage_predictions_by_specimen=None,
-                         apply_rank_refinement=False, soft_predictions_by_crop=None,
-                         locality_corpus=None, local_vlm_predictions_by_crop=None):
+def build_submission_df(image_files: list[str], manifest_by_image: dict[str, list[str]],
+                        predictions_by_crop: dict[str, FieldScores],
+                        wholeimage_predictions_by_specimen: dict[str, FieldScores] | None = None,
+                        apply_rank_refinement: bool = False,
+                        soft_predictions_by_crop: dict[str, FieldScores] | None = None,
+                        locality_corpus: Mapping[str, int] | None = None,
+                        local_vlm_predictions_by_crop: dict[str, FieldScores] | None = None,
+                        ) -> pd.DataFrame:
     """apply_rank_refinement=True layers src.confidence_rank_rules on top of
     the production merge/penalty pipeline: the structural-MISSING tier, then
     within_tier_score's soft-consistency (+ corpus-support for
@@ -167,7 +173,7 @@ def build_submission_df(image_files, manifest_by_image, predictions_by_crop,
             apply_wholeimage_fallback(cleaned, wholeimage_predictions_by_specimen)
         )
 
-    soft_merged = None
+    soft_merged: dict[str, FieldScores] | None = None
     if apply_rank_refinement and soft_predictions_by_crop is not None:
         soft_merged = merge_predictions_by_specimen(soft_predictions_by_crop, manifest_by_image, image_files)
         soft_merged = clean_merged_predictions(soft_merged)
@@ -176,16 +182,17 @@ def build_submission_df(image_files, manifest_by_image, predictions_by_crop,
                 apply_wholeimage_fallback(soft_merged, wholeimage_predictions_by_specimen)
             )
 
-    local_vlm_merged, local_vlm_covered_crops = None, None
+    local_vlm_merged: dict[str, FieldScores] | None = None
+    local_vlm_covered_crops: dict[str, list[str]] | None = None
     if apply_rank_refinement and local_vlm_predictions_by_crop:
         local_vlm_merged = merge_predictions_by_specimen(
             local_vlm_predictions_by_crop, manifest_by_image, image_files
         )
         local_vlm_covered_crops = covered_crops_by_specimen(manifest_by_image, local_vlm_predictions_by_crop)
 
-    rows = []
+    rows: list[dict[str, str | float]] = []
     for image_file in image_files:
-        row = {"image_file": image_file}
+        row: dict[str, str | float] = {"image_file": image_file}
         for field in FIELDS:
             text, confidence = cleaned[image_file][field]
             n_processed, n_contributing = count_processed_and_contributing(
@@ -196,10 +203,11 @@ def build_submission_df(image_files, manifest_by_image, predictions_by_crop,
                 confidence = apply_structural_missing_tier(confidence, text, n_processed, n_contributing)
                 if soft_merged is not None:
                     soft_confidence = soft_merged[image_file][field][1]
-                    agreement = None
+                    agreement: float | None = None
                     if local_vlm_merged is not None:
+                        # local_vlm_covered_crops is always set together with local_vlm_merged above.
                         agreement = local_vlm_agreement_score(
-                            image_file, field, text, local_vlm_merged, local_vlm_covered_crops
+                            image_file, field, text, local_vlm_merged, local_vlm_covered_crops,  # type: ignore[arg-type]
                         )
                     score = within_tier_score(field, text, soft_confidence, locality_corpus, agreement)
                     confidence = combine_tier_and_within_tier_score(confidence, score)
@@ -209,9 +217,13 @@ def build_submission_df(image_files, manifest_by_image, predictions_by_crop,
     return pd.DataFrame(rows, columns=REQUIRED_COLUMNS)
 
 
-def build_wholeimage_primary_submission_df(image_files, wholeimage_predictions, per_card_merged,
-                                            locality_corpus=None, local_vlm_merged=None,
-                                            local_vlm_covered_crops=None):
+def build_wholeimage_primary_submission_df(image_files: list[str],
+                                           wholeimage_predictions: dict[str, FieldScores],
+                                           per_card_merged: dict[str, FieldScores],
+                                           locality_corpus: Mapping[str, int] | None = None,
+                                           local_vlm_merged: dict[str, FieldScores] | None = None,
+                                           local_vlm_covered_crops: dict[str, list[str]] | None = None,
+                                           ) -> pd.DataFrame:
     """Submission rows for the whole-image-primary route: text from the
     whole-image pass, confidence from src.route_agreement.
 
@@ -229,17 +241,18 @@ def build_wholeimage_primary_submission_df(image_files, wholeimage_predictions, 
     are optional within-tier signals; None means "not available here", which
     degrades gracefully."""
     cleaned_wholeimage = clean_merged_predictions(wholeimage_predictions)
-    rows = []
+    rows: list[dict[str, str | float]] = []
     for image_file in image_files:
-        row = {"image_file": image_file}
+        row: dict[str, str | float] = {"image_file": image_file}
         covered = image_file in cleaned_wholeimage
         source = cleaned_wholeimage[image_file] if covered else per_card_merged[image_file]
         for field in FIELDS:
             text, per_card_confidence = source[field]
-            agreement = None
+            agreement: float | None = None
             if local_vlm_merged is not None:
+                # Not guarded: passing local_vlm_merged without local_vlm_covered_crops fails here.
                 agreement = local_vlm_agreement_score(
-                    image_file, field, text, local_vlm_merged, local_vlm_covered_crops
+                    image_file, field, text, local_vlm_merged, local_vlm_covered_crops,  # type: ignore[arg-type]
                 )
             if covered:
                 per_card_text, per_card_self_consistency = per_card_merged[image_file][field]
@@ -265,10 +278,11 @@ def build_wholeimage_primary_submission_df(image_files, wholeimage_predictions, 
 
 
 def generate_wholeimage_primary_submission(
-        test_csv_path=TEST_CSV_PATH, manifest_path=MANIFEST_PATH,
-        predictions_path=TEST_PREDICTIONS_PATH,
-        wholeimage_primary_predictions_path=TEST_WHOLEIMAGE_PRIMARY_PREDICTIONS_PATH,
-        output_path=WHOLEIMAGE_PRIMARY_OUTPUT_PATH, local_vlm_predictions_path=None):
+        test_csv_path: str = TEST_CSV_PATH, manifest_path: str = MANIFEST_PATH,
+        predictions_path: str = TEST_PREDICTIONS_PATH,
+        wholeimage_primary_predictions_path: str = TEST_WHOLEIMAGE_PRIMARY_PREDICTIONS_PATH,
+        output_path: str = WHOLEIMAGE_PRIMARY_OUTPUT_PATH,
+        local_vlm_predictions_path: str | None = None) -> None:
     """Builds WHOLEIMAGE_PRIMARY_OUTPUT_PATH. The locality corpus is built with the
     whole-image predictions added as a source, since they are 3,300 fresh
     transcriptions and by far the largest corroborating evidence available -- passed
@@ -288,7 +302,8 @@ def generate_wholeimage_primary_submission(
     locality_corpus = build_locality_corpus(
         paths=tuple(LOCALITY_CORPUS_DEFAULT_SOURCES) + (wholeimage_primary_predictions_path,))
 
-    local_vlm_merged, local_vlm_covered_crops = None, None
+    local_vlm_merged: dict[str, FieldScores] | None = None
+    local_vlm_covered_crops: dict[str, list[str]] | None = None
     if local_vlm_predictions_path is not None:
         local_vlm_by_crop = build_local_vlm_predictions_by_crop(local_vlm_predictions_path)
         local_vlm_merged = merge_predictions_by_specimen(
@@ -307,19 +322,19 @@ def generate_wholeimage_primary_submission(
     print(f"wrote {len(out_df)} rows to {output_path}")
 
 
-def generate_submission_gemini(test_csv_path=TEST_CSV_PATH, manifest_path=MANIFEST_PATH,
-                                predictions_path=TEST_PREDICTIONS_PATH,
-                                wholeimage_predictions_path=TEST_WHOLEIMAGE_PREDICTIONS_PATH,
-                                output_path=OUTPUT_PATH, apply_rank_refinement=False,
-                                local_vlm_predictions_path=None):
+def generate_submission_gemini(test_csv_path: str = TEST_CSV_PATH, manifest_path: str = MANIFEST_PATH,
+                               predictions_path: str = TEST_PREDICTIONS_PATH,
+                               wholeimage_predictions_path: str = TEST_WHOLEIMAGE_PREDICTIONS_PATH,
+                               output_path: str = OUTPUT_PATH, apply_rank_refinement: bool = False,
+                               local_vlm_predictions_path: str | None = None) -> None:
     image_files = pd.read_csv(test_csv_path)["image_file"].tolist()
     manifest_by_image = load_manifest(manifest_path)
     predictions_by_crop = load_predictions_by_crop(predictions_path)
     wholeimage_predictions = load_wholeimage_predictions(wholeimage_predictions_path)
 
-    soft_predictions_by_crop = None
-    locality_corpus = None
-    local_vlm_predictions_by_crop = None
+    soft_predictions_by_crop: dict[str, FieldScores] | None = None
+    locality_corpus: Mapping[str, int] | None = None
+    local_vlm_predictions_by_crop: dict[str, FieldScores] | None = None
     if apply_rank_refinement:
         soft_predictions_by_crop = rescored_predictions_by_crop(predictions_path, soft_consistency_scores)
         locality_corpus = build_locality_corpus()

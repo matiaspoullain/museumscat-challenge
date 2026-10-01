@@ -60,6 +60,8 @@ Independent tools:
    152/197 dev crop coverage dilutes both the effect and the bootstrap's
    power; see the plan doc's Track A3 section).
 """
+from collections.abc import Mapping
+
 from src.locality_corpus import corpus_support_score
 from src.metrics import normalize_date_punctuation
 
@@ -80,7 +82,7 @@ STRUCTURAL_MISSING_CONFIDENCE = 0.95
 TIER_EPSILON = 0.01
 
 
-def is_confident_structural_missing(text, n_processed, n_contributing):
+def is_confident_structural_missing(text: str, n_processed: int, n_contributing: int) -> bool:
     """True when a field's MISSING prediction reflects low-ambiguity structural
     absence: <2 card crops were Gemini-processed for this specimen (so there's no
     second-card-coverage risk to flag), and none of them found a value for the
@@ -91,8 +93,9 @@ def is_confident_structural_missing(text, n_processed, n_contributing):
     return text == "MISSING" and n_processed < 2 and n_contributing == 0
 
 
-def apply_structural_missing_tier(confidence, text, n_processed, n_contributing,
-                                   structural_missing_confidence=STRUCTURAL_MISSING_CONFIDENCE):
+def apply_structural_missing_tier(confidence: float, text: str, n_processed: int, n_contributing: int,
+                                  structural_missing_confidence: float = STRUCTURAL_MISSING_CONFIDENCE,
+                                  ) -> float:
     """Overrides confidence with structural_missing_confidence when
     is_confident_structural_missing holds, else returns confidence unchanged.
     Order relative to src.confidence_penalty_rules.apply_confidence_penalty
@@ -104,7 +107,7 @@ def apply_structural_missing_tier(confidence, text, n_processed, n_contributing,
     return confidence
 
 
-def combine_tier_and_within_tier_score(tier_confidence, within_tier_score):
+def combine_tier_and_within_tier_score(tier_confidence: float, within_tier_score: float) -> float:
     """base + TIER_EPSILON * clip(within_tier_score, 0, 1), where base is
     tier_confidence capped at 1.0 - TIER_EPSILON. Monotonic in
     within_tier_score, and bounded so the result never reaches
@@ -135,7 +138,7 @@ _MIN_PLAUSIBLE_YEAR = 1700
 _MAX_PLAUSIBLE_YEAR = 2026
 
 
-def date_plausibility_score(text):
+def date_plausibility_score(text: str) -> float:
     """Heuristic in [0,1]: 1.0 for a string that parses as a real calendar
     date (day<=31, month<=12, a plausible year), 0.0 for a bare number with no
     date-like separators at all -- the catalog-number-as-date failure mode --
@@ -166,7 +169,9 @@ def date_plausibility_score(text):
     return 1.0 if plausible else 0.0
 
 
-def within_tier_score(field, text, soft_confidence, locality_corpus=None, local_vlm_agreement=None):
+def within_tier_score(field: str, text: str, soft_confidence: float,
+                      locality_corpus: Mapping[str, int] | None = None,
+                      local_vlm_agreement: float | None = None) -> float:
     """The shipped within-tier combiner (see module docstring point 4).
     soft_confidence is this specimen's soft (edit-distance) self-consistency
     for `field` -- src.gemini_transcribe.soft_consistency_scores merged the

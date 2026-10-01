@@ -29,6 +29,8 @@ src.calibrate_gemini_confidence.load_wholeimage_predictions.
 import csv
 import os
 
+from src.merge_records import FieldScores
+
 FIELDS = ("verbatimDate", "verbatimLocality")
 
 DEV_LOCAL_VLM_CARD_PATH = os.path.join(
@@ -36,14 +38,14 @@ DEV_LOCAL_VLM_CARD_PATH = os.path.join(
 )
 
 
-def _normalize(text):
+def _normalize(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
-def build_local_vlm_predictions_by_crop(path=DEV_LOCAL_VLM_CARD_PATH):
+def build_local_vlm_predictions_by_crop(path: str = DEV_LOCAL_VLM_CARD_PATH) -> dict[str, FieldScores]:
     if not os.path.exists(path):
         return {}
-    by_crop = {}
+    by_crop: dict[str, FieldScores] = {}
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             by_crop[row["crop_filename"]] = {
@@ -55,7 +57,8 @@ def build_local_vlm_predictions_by_crop(path=DEV_LOCAL_VLM_CARD_PATH):
     return by_crop
 
 
-def covered_crops_by_specimen(manifest_by_image, local_predictions_by_crop):
+def covered_crops_by_specimen(manifest_by_image: dict[str, list[str]],
+                              local_predictions_by_crop: dict[str, FieldScores]) -> dict[str, list[str]]:
     """image_file -> [crop_filename, ...] restricted to crops the local VLM
     actually has a prediction for -- coverage is partial (152/197 dev crops
     in the pilot run), so callers must be able to tell "not covered" (empty
@@ -67,7 +70,9 @@ def covered_crops_by_specimen(manifest_by_image, local_predictions_by_crop):
     }
 
 
-def local_vlm_agreement_score(image_file, field, gemini_text, local_merged, covered_crops):
+def local_vlm_agreement_score(image_file: str, field: str, gemini_text: str,
+                              local_merged: dict[str, FieldScores],
+                              covered_crops: dict[str, list[str]]) -> float:
     """[0.0, 0.5, 1.0]: 1.0 if the local VLM's specimen-level merged text for
     `field` (case/whitespace-normalized) matches Gemini's final text, 0.0 if
     it disagrees, 0.5 (neutral -- leaves within_tier_score's other components

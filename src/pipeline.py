@@ -7,22 +7,23 @@ manifest/prediction loaders and `process_specimen`.
 """
 
 import csv
+from collections.abc import Callable
 
 from src.classify_field import classify_field
-from src.merge_records import assemble_field
-from src.reconstruct_lines import group_into_lines
+from src.merge_records import CardValue, assemble_field
+from src.reconstruct_lines import Line, WordRow, group_into_lines
 
 FIELD_TO_COLUMN = {"date": "verbatimDate", "locality": "verbatimLocality"}
 
 
-def classify_card_field_values(lines):
-    grouped = {"date": [], "locality": []}
+def classify_card_field_values(lines: list[Line]) -> dict[str, CardValue]:
+    grouped: dict[str, list[Line]] = {"date": [], "locality": []}
     for line in lines:
         field = classify_field(line["text"])
         if field in grouped:
             grouped[field].append(line)
 
-    values = {}
+    values: dict[str, CardValue] = {}
     for field, field_lines in grouped.items():
         if not field_lines:
             continue
@@ -32,14 +33,15 @@ def classify_card_field_values(lines):
     return values
 
 
-def process_specimen(crop_filenames, lines_by_crop, is_relevant=None):
+def process_specimen(crop_filenames: list[str], lines_by_crop: dict[str, list[Line]],
+                     is_relevant: Callable[[str], bool] | None = None) -> dict[str, CardValue]:
     """is_relevant: optional crop_filename -> bool predicate. When given, cards
     it flags as not relevant (e.g. confound/collector labels) are dropped
     before their lines are classified, instead of relying solely on
     classify_field to filter out confound text line-by-line."""
     if is_relevant is not None:
         crop_filenames = [c for c in crop_filenames if is_relevant(c)]
-    per_field_cards = {"date": [], "locality": []}
+    per_field_cards: dict[str, list[CardValue]] = {"date": [], "locality": []}
     for crop_filename in crop_filenames:
         card_values = classify_card_field_values(lines_by_crop.get(crop_filename, []))
         for field, value in card_values.items():
@@ -50,15 +52,17 @@ def process_specimen(crop_filenames, lines_by_crop, is_relevant=None):
     }
 
 
-def run_pipeline(image_files, manifest_by_image, lines_by_crop, is_relevant=None):
+def run_pipeline(image_files: list[str], manifest_by_image: dict[str, list[str]],
+                 lines_by_crop: dict[str, list[Line]],
+                 is_relevant: Callable[[str], bool] | None = None) -> dict[str, dict[str, CardValue]]:
     return {
         image_file: process_specimen(manifest_by_image.get(image_file, []), lines_by_crop, is_relevant)
         for image_file in image_files
     }
 
 
-def load_manifest(path):
-    by_image = {}
+def load_manifest(path: str) -> dict[str, list[str]]:
+    by_image: dict[str, list[tuple[int, str]]] = {}
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             by_image.setdefault(row["source_image_file"], []).append(
@@ -70,8 +74,8 @@ def load_manifest(path):
     }
 
 
-def load_predictions(path):
-    rows = []
+def load_predictions(path: str) -> dict[str, list[Line]]:
+    rows: list[WordRow] = []
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             rows.append({

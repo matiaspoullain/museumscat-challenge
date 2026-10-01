@@ -12,10 +12,13 @@ Kept as a fixed multiplicative penalty rather than folded into
 src.old.gemini_calibration_features' learned multi-feature calibrator, so the two
 approaches (hardcoded rule vs. fit-on-dev-data) can be compared head to head."""
 
+from src.merge_records import FieldScores
+
 PENALTY_FACTOR = 0.7
 
 
-def count_processed_and_contributing(image_file, field, manifest_by_image, predictions_by_crop):
+def count_processed_and_contributing(image_file: str, field: str, manifest_by_image: dict[str, list[str]],
+                                     predictions_by_crop: dict[str, FieldScores]) -> tuple[int, int]:
     n_processed = 0
     n_contributing = 0
     for crop_filename in manifest_by_image.get(image_file, []):
@@ -29,6 +32,7 @@ def count_processed_and_contributing(image_file, field, manifest_by_image, predi
     return n_processed, n_contributing
 
 
-def apply_confidence_penalty(confidence, n_processed, n_contributing, penalty_factor = PENALTY_FACTOR):
+def apply_confidence_penalty(confidence: float, n_processed: int, n_contributing: int,
+                             penalty_factor: float = PENALTY_FACTOR) -> float:
     flagged = n_processed >= 2 and n_contributing < n_processed
     return confidence * penalty_factor if flagged else confidence

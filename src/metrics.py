@@ -8,6 +8,7 @@ computes the area under the risk-coverage curve, which depends only on the
 
 import itertools
 import re
+from collections.abc import Sequence
 
 # An NED at or below this counts as "correct" wherever a binary correct/incorrect
 # label is needed (Platt-style calibration, high-confidence-error mining) --
@@ -16,7 +17,7 @@ import re
 CORRECT_THRESHOLD = 0.05
 
 
-def edit_distance(a, b):
+def edit_distance(a: str, b: str) -> int:
     m, n = len(a), len(b)
     dp = list(range(n + 1))
     for i in range(1, m + 1):
@@ -30,11 +31,11 @@ def edit_distance(a, b):
     return dp[n]
 
 
-def normalize_date_punctuation(s):
+def normalize_date_punctuation(s: str) -> str:
     return re.sub(r"[.,\-·\s]+", ".", s.strip()).strip(".")
 
 
-def ned(pred, truth, is_date=False):
+def ned(pred: str, truth: str, is_date: bool = False) -> float:
     p, t = pred.strip().lower(), truth.strip().lower()
     if is_date:
         p, t = normalize_date_punctuation(p), normalize_date_punctuation(t)
@@ -44,7 +45,7 @@ def ned(pred, truth, is_date=False):
     return edit_distance(p, t) / denom
 
 
-def best_pipe_ned(pred, truth, is_date=False):
+def best_pipe_ned(pred: str, truth: str, is_date: bool = False) -> float:
     pred_cards = [c.strip() for c in pred.split("|")]
     truth_cards = [c.strip() for c in truth.split("|")]
     if len(pred_cards) != len(truth_cards):
@@ -60,12 +61,12 @@ def best_pipe_ned(pred, truth, is_date=False):
     )
 
 
-def aurc(errors, confidences):
+def aurc(errors: Sequence[float], confidences: Sequence[float]) -> float:
     n = len(errors)
     order = sorted(range(n), key=lambda i: -confidences[i])
     sorted_errors = [errors[i] for i in order]
     cum = 0.0
-    risks = []
+    risks: list[float] = []
     for i, e in enumerate(sorted_errors, start=1):
         cum += e
         risks.append(cum / i)

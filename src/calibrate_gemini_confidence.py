@@ -17,16 +17,19 @@ Usage:
 import csv
 import json
 import os
+from collections.abc import Callable
+from typing import TypeAlias, cast
 
 import joblib
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import KFold
 
 from src.eda_card_visual_features import N_FOLDS, RANDOM_STATE
-from src.merge_records import assemble_field
+from src.merge_records import CardValue, FieldScores, assemble_field
 from src.metrics import CORRECT_THRESHOLD, best_pipe_ned
 from src.pipeline import load_manifest
 
@@ -41,8 +44,8 @@ FIELD_IS_DATE = {"verbatimDate": True, "verbatimLocality": False}
 FIELDS = tuple(FIELD_IS_DATE)
 
 
-def load_predictions_by_crop(path=DEV_PREDICTIONS_PATH):
-    by_crop = {}
+def load_predictions_by_crop(path: str = DEV_PREDICTIONS_PATH) -> dict[str, FieldScores]:
+    by_crop: dict[str, FieldScores] = {}
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             by_crop[row["crop_filename"]] = {
@@ -52,14 +55,15 @@ def load_predictions_by_crop(path=DEV_PREDICTIONS_PATH):
     return by_crop
 
 
-def rescored_predictions_by_crop(path, scorer_fn):
+def rescored_predictions_by_crop(path: str, scorer_fn: Callable[[list[dict[str, str]]], FieldScores],
+                                 ) -> dict[str, FieldScores]:
     """Re-derives {crop_filename: {field: (text, confidence)}} from each row's
     stored raw_samples_json using scorer_fn (self_consistency_scores or
     soft_consistency_scores from src.gemini_transcribe), instead of the
     confidence columns already written to the CSV -- lets a new confidence-
     scoring function be evaluated against the existing dev predictions without
     re-calling the Gemini API."""
-    by_crop = {}
+    by_crop: dict[str, FieldScores] = {}
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             samples = json.loads(row["raw_samples_json"])
@@ -67,7 +71,9 @@ def rescored_predictions_by_crop(path, scorer_fn):
     return by_crop
 
 
-def merge_predictions_by_specimen(predictions_by_crop, manifest_by_image, image_files):
+def merge_predictions_by_specimen(predictions_by_crop: dict[str, FieldScores],
+                                  manifest_by_image: dict[str, list[str]],
+                                  image_files: list[str]) -> dict[str, FieldScores]:
     """image_file -> {field: (text, confidence)}, same shape as
     src.pipeline.run_pipeline's output. Crops with no row in predictions_by_crop
     (skipped as confound, or not yet transcribed) simply don't contribute --
@@ -78,9 +84,9 @@ def merge_predictions_by_specimen(predictions_by_crop, manifest_by_image, image_
     it in would produce e.g. "22.5.1977 | MISSING" for a specimen whose true
     verbatimDate is just "22.5.1977". "MISSING" is reserved for when *no* card
     has a value for the field at all, via assemble_field([])."""
-    merged = {}
+    merged: dict[str, FieldScores] = {}
     for image_file in image_files:
-        per_field_cards = {field: [] for field in FIELD_IS_DATE}
+        per_field_cards: dict[str, list[CardValue]] = {field: [] for field in FIELD_IS_DATE}
         for crop_filename in manifest_by_image.get(image_file, []):
             card = predictions_by_crop.get(crop_filename)
             if card is None:
@@ -93,7 +99,7 @@ def merge_predictions_by_specimen(predictions_by_crop, manifest_by_image, image_
     return merged
 
 
-def load_wholeimage_predictions(path=DEV_WHOLEIMAGE_PREDICTIONS_PATH):
+def load_wholeimage_predictions(path: str = DEV_WHOLEIMAGE_PREDICTIONS_PATH) -> dict[str, FieldScores]:
     """source_image_file -> {field: (text, confidence)}, one row per specimen
     (no crop-level nesting, unlike load_predictions_by_crop -- a whole-image
     call already covers the whole specimen). Missing file (fallback pass not
@@ -101,7 +107,7 @@ def load_wholeimage_predictions(path=DEV_WHOLEIMAGE_PREDICTIONS_PATH):
     "not run yet" the same as "no fallback available"."""
     if not os.path.exists(path):
         return {}
-    by_specimen = {}
+    by_specimen: dict[str, FieldScores] = {}
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             by_specimen[row["source_image_file"]] = {
@@ -111,7 +117,8 @@ def load_wholeimage_predictions(path=DEV_WHOLEIMAGE_PREDICTIONS_PATH):
     return by_specimen
 
 
-def apply_wholeimage_fallback(merged, wholeimage_predictions):
+def apply_wholeimage_fallback(merged: dict[str, FieldScores],
+                              wholeimage_predictions: dict[str, FieldScores]) -> dict[str, FieldScores]:
     """Overlays whole-image fallback predictions onto a per-card merge,
     field by field: fills in a field only where the per-card side is
     "MISSING" and the fallback found a real value, never overwriting a
@@ -119,7 +126,7 @@ def apply_wholeimage_fallback(merged, wholeimage_predictions):
     whole-image call when *both* fields were MISSING, but the whole-image
     response itself may find only one of the two -- no reason to discard the
     field it did find."""
-    result = {}
+    result: dict[str, FieldScores] = {}
     for image_file, fields in merged.items():
         fallback = wholeimage_predictions.get(image_file)
         updated = dict(fields)
@@ -131,9 +138,12 @@ def apply_wholeimage_fallback(merged, wholeimage_predictions):
     return result
 
 
-def _confidences_and_correctness(merged, ground_truth_df):
+def _confidences_and_correctness(merged: dict[str, FieldScores], ground_truth_df: pd.DataFrame,
+                                 ) -> dict[str, dict[str, list[float]]]:
     """field -> (confidences, correctness=1-ned) lists, aligned by dev specimen."""
-    by_field = {field: {"confidences": [], "correctness": []} for field in FIELD_IS_DATE}
+    by_field: dict[str, dict[str, list[float]]] = {
+        field: {"confidences": [], "correctness": []} for field in FIELD_IS_DATE
+    }
     for _, row in ground_truth_df.iterrows():
         for field, is_date in FIELD_IS_DATE.items():
             text, confidence = merged[row["image_file"]][field]
@@ -152,20 +162,20 @@ _SHRINKAGE_ALPHA = 0.5
 
 
 class _ShrinkageCalibrator:
-    def __init__(self, isotonic, alpha=_SHRINKAGE_ALPHA):
+    def __init__(self, isotonic: IsotonicRegression, alpha: float = _SHRINKAGE_ALPHA) -> None:
         self.isotonic = isotonic
         self.alpha = alpha
 
-    def predict(self, x):
+    def predict(self, x: ArrayLike) -> np.ndarray:
         x = np.asarray(x, dtype=float)
         return self.alpha * self.isotonic.predict(x) + (1 - self.alpha) * x
 
 
 class _PlattWrapper:
-    def __init__(self, logistic):
+    def __init__(self, logistic: LogisticRegression) -> None:
         self.logistic = logistic
 
-    def predict(self, x):
+    def predict(self, x: ArrayLike) -> np.ndarray:
         x = np.asarray(x, dtype=float).reshape(-1, 1)
         return self.logistic.predict_proba(x)[:, 1]
 
@@ -175,14 +185,18 @@ class _ConstantCalibrator:
     LogisticRegression has no decision boundary to fit -- predicts the
     observed correct-rate for every input."""
 
-    def __init__(self, value):
+    def __init__(self, value: float) -> None:
         self.value = value
 
-    def predict(self, x):
+    def predict(self, x: ArrayLike) -> np.ndarray:
         return np.full(len(np.asarray(x).reshape(-1)), self.value)
 
 
-def _fit_1d_calibrator(confidences, correctness, family):
+# Every family _fit_1d_calibrator can return; all expose predict(x) -> np.ndarray.
+Calibrator: TypeAlias = IsotonicRegression | _ShrinkageCalibrator | _PlattWrapper | _ConstantCalibrator
+
+
+def _fit_1d_calibrator(confidences: list[float], correctness: list[float], family: str) -> Calibrator:
     if family == "isotonic":
         calibrator = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
         calibrator.fit(confidences, correctness)
@@ -202,7 +216,8 @@ def _fit_1d_calibrator(confidences, correctness, family):
     raise ValueError(f"unknown calibrator family: {family!r}")
 
 
-def fit_calibrators(merged, ground_truth_df, family="isotonic"):
+def fit_calibrators(merged: dict[str, FieldScores], ground_truth_df: pd.DataFrame,
+                    family: str = "isotonic") -> dict[str, Calibrator]:
     by_field = _confidences_and_correctness(merged, ground_truth_df)
     return {
         field: _fit_1d_calibrator(data["confidences"], data["correctness"], family)
@@ -210,14 +225,15 @@ def fit_calibrators(merged, ground_truth_df, family="isotonic"):
     }
 
 
-def oof_calibrated_confidences(merged, ground_truth_df, family="isotonic"):
+def oof_calibrated_confidences(merged: dict[str, FieldScores], ground_truth_df: pd.DataFrame,
+                               family: str = "isotonic") -> dict[str, list[float]]:
     """5-fold out-of-fold calibrated confidence per field, for an honest
     (leakage-free) dev-set AURC estimate."""
     by_field = _confidences_and_correctness(merged, ground_truth_df)
-    result = {}
+    result: dict[str, list[float]] = {}
     for field, data in by_field.items():
         confidences, correctness = data["confidences"], data["correctness"]
-        calibrated = [None] * len(confidences)
+        calibrated: list[float | None] = [None] * len(confidences)
         kf = KFold(n_splits=N_FOLDS, shuffle=True, random_state=RANDOM_STATE)
         for train_idx, test_idx in kf.split(confidences):
             calibrator = _fit_1d_calibrator(
@@ -225,13 +241,14 @@ def oof_calibrated_confidences(merged, ground_truth_df, family="isotonic"):
             )
             for i in test_idx:
                 calibrated[i] = float(calibrator.predict([confidences[i]])[0])
-        result[field] = calibrated
+        # Every index is filled by exactly one KFold test split, so no None survives.
+        result[field] = cast(list[float], calibrated)
     return result
 
 
-def save_calibrators(calibrators, models_dir=MODELS_DIR):
+def save_calibrators(calibrators: dict[str, Calibrator], models_dir: str = MODELS_DIR) -> dict[str, str]:
     os.makedirs(models_dir, exist_ok=True)
-    paths = {}
+    paths: dict[str, str] = {}
     for field, calibrator in calibrators.items():
         path = os.path.join(models_dir, f"gemini_calibrator_{field}.joblib")
         joblib.dump(calibrator, path)
@@ -239,7 +256,7 @@ def save_calibrators(calibrators, models_dir=MODELS_DIR):
     return paths
 
 
-def load_calibrators(models_dir=MODELS_DIR):
+def load_calibrators(models_dir: str = MODELS_DIR) -> dict[str, Calibrator]:
     # joblib.load deserializes via pickle, but these files are only ever written by
     # save_calibrators() in this repo (models/ is gitignored, never fetched from a
     # remote/untrusted source), so there's no untrusted-input risk here.
@@ -249,11 +266,11 @@ def load_calibrators(models_dir=MODELS_DIR):
     }
 
 
-def apply_calibration(calibrator, raw_confidence):
+def apply_calibration(calibrator: Calibrator, raw_confidence: float) -> float:
     return float(calibrator.predict([raw_confidence])[0])
 
 
-def main():
+def main() -> None:
     ground_truth_df = pd.read_csv(TRAIN_CSV_PATH)
     manifest_by_image = load_manifest(MANIFEST_PATH)
     predictions_by_crop = load_predictions_by_crop()

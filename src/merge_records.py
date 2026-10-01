@@ -7,8 +7,13 @@ contributed a value.
 
 MISSING_CONFIDENCE = 0.5
 
+# One card's (text, confidence) for a single field.
+CardValue = tuple[str, float]
+# {field: (text, confidence)} for one card or one specimen.
+FieldScores = dict[str, CardValue]
 
-def assemble_field(cards):
+
+def assemble_field(cards: list[CardValue]) -> CardValue:
     if not cards:
         return "MISSING", MISSING_CONFIDENCE
     texts = [text for text, _ in cards]

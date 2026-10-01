@@ -30,13 +30,14 @@ PADDING = -50
 MIN_ROTATION_DEG = 0.05
 
 
-def _dassco_mask(img):
+def _dassco_mask(img: np.ndarray) -> np.ndarray:
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, DASSCO_HSV_LOW, DASSCO_HSV_HIGH)
+    # cv2's stubs only accept arrays for the bounds; plain tuples work at runtime.
+    mask = cv2.inRange(hsv, DASSCO_HSV_LOW, DASSCO_HSV_HIGH)  # type: ignore[call-overload]
     return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((DASSCO_OPEN_KERNEL, DASSCO_OPEN_KERNEL), np.uint8))
 
 
-def _dassco_bbox(img):
+def _dassco_bbox(img: np.ndarray) -> tuple[int, int, int, int] | None:
     mask = _dassco_mask(img)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     if n <= 1:
@@ -46,7 +47,7 @@ def _dassco_bbox(img):
     return (x, y, w, h)
 
 
-def _dassco_rotation_angle(img):
+def _dassco_rotation_angle(img: np.ndarray) -> float:
     """Degrees to rotate `img` (cv2.getRotationMatrix2D convention, positive
     = counterclockwise) so the DaSSCo card - and with it, the whole rigid
     mount - is horizontal. Calibrated empirically: applying a rotation R to a
@@ -69,7 +70,7 @@ def _dassco_rotation_angle(img):
     return angle
 
 
-def _deskew(img):
+def _deskew(img: np.ndarray) -> tuple[np.ndarray, float]:
     """Return (rotated_img, angle_applied). No-op below MIN_ROTATION_DEG."""
     angle = _dassco_rotation_angle(img)
     if abs(angle) < MIN_ROTATION_DEG:
@@ -80,7 +81,7 @@ def _deskew(img):
     return rotated, angle
 
 
-def find_search_roi(image_path):
+def find_search_roi(image_path: str) -> tuple[float, tuple[int, int, int, int]]:
     """Return (angle, (x1, y1, x2, y2)): the degrees to rotate the original
     image by (cv2.getRotationMatrix2D convention) to straighten the mount,
     and the ROI box valid on that rotated image — bounding the mount surface
@@ -91,8 +92,9 @@ def find_search_roi(image_path):
     mount is shifted or tilted in-frame. See
     tables_figures/eda/dassco_anchor_test/notes.md for why.
     """
+    # cv2.imread returns None for an unreadable path, which isn't guarded here.
     img = cv2.imread(image_path)
-    img, angle = _deskew(img)
+    img, angle = _deskew(img)  # type: ignore[arg-type]
     h, w = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -128,9 +130,10 @@ def find_search_roi(image_path):
     return angle, (x1, y1, x2, y2)
 
 
-def get_search_crop(image_path):
+def get_search_crop(image_path: str) -> np.ndarray:
     """Deskew + crop in one step: the actual image data ready for OCR."""
+    # cv2.imread returns None for an unreadable path, which isn't guarded here.
     img = cv2.imread(image_path)
-    img, _ = _deskew(img)
+    img, _ = _deskew(img)  # type: ignore[arg-type]
     _, (x1, y1, x2, y2) = find_search_roi(image_path)
     return img[y1:y2, x1:x2]

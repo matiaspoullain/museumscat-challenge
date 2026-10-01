@@ -10,8 +10,11 @@ import csv
 import json
 import os
 import time
+from collections.abc import Iterable
+from typing import cast
 
 import httpx
+from google import genai
 from google.genai import errors as genai_errors
 
 from src.gemini_transcribe import (
@@ -19,10 +22,12 @@ from src.gemini_transcribe import (
     PROMPT,
     RateLimiter,
     WHOLE_IMAGE_PROMPT,
+    FieldValues,
     build_client,
     call_gemini_once,
     transcribe_card_with_confidence,
 )
+from src.merge_records import FieldScores
 from src.pipeline import load_manifest
 
 # How long to back off before retrying the same model after a per-minute
@@ -66,12 +71,13 @@ OUTPUT_COLUMNS_WHOLEIMAGE = [
 FIELDS = ("verbatimDate", "verbatimLocality")
 
 
-def pending_crops(image_files, relevance_flags, manifest_path=MANIFEST_PATH):
+def pending_crops(image_files: list[str], relevance_flags: dict[str, bool],
+                  manifest_path: str = MANIFEST_PATH) -> list[tuple[str, str]]:
     """Card crops belonging to image_files, skipping any the relevance
     classifier flags as confound (saves quota; a card missing entirely from
     the output is treated downstream exactly like an empty card list)."""
     manifest_by_image = load_manifest(manifest_path)
-    crops = []
+    crops: list[tuple[str, str]] = []
     for image_file in image_files:
         for crop_filename in manifest_by_image.get(image_file, []):
             if relevance_flags.get(crop_filename, True):
@@ -79,14 +85,15 @@ def pending_crops(image_files, relevance_flags, manifest_path=MANIFEST_PATH):
     return crops
 
 
-def already_done(output_path, key_column="crop_filename"):
+def already_done(output_path: str, key_column: str = "crop_filename") -> set[str]:
     if not os.path.exists(output_path):
         return set()
     with open(output_path, encoding="utf-8") as f:
         return {row[key_column] for row in csv.DictReader(f)}
 
 
-def pending_crop_count(image_files, relevance_flags, output_path, manifest_path=MANIFEST_PATH):
+def pending_crop_count(image_files: list[str], relevance_flags: dict[str, bool], output_path: str,
+                       manifest_path: str = MANIFEST_PATH) -> int:
     """How many relevant card crops for image_files still have no row in
     output_path -- used to gate a whole-image fallback pass on the per-card
     pass being fully finished first. merge_predictions_by_specimen can't tell
@@ -99,13 +106,13 @@ def pending_crop_count(image_files, relevance_flags, output_path, manifest_path=
     return sum(1 for crop_filename, _ in all_pending if crop_filename not in done)
 
 
-def wholeimage_pending(image_files, merged_predictions):
+def wholeimage_pending(image_files: list[str], merged_predictions: dict[str, FieldScores]) -> list[str]:
     """image_files whose merged per-card prediction (src.calibrate_gemini_confidence.
     merge_predictions_by_specimen's output shape) has both fields "MISSING" --
     the per-card path found nothing for these, so a whole-image fallback call
     is worth the extra quota. A specimen absent from merged_predictions is
     skipped (nothing to compare against)."""
-    pending = []
+    pending: list[str] = []
     for image_file in image_files:
         fields = merged_predictions.get(image_file)
         if fields is None:
@@ -115,11 +122,11 @@ def wholeimage_pending(image_files, merged_predictions):
     return pending
 
 
-def is_quota_exhausted(error):
+def is_quota_exhausted(error: Exception) -> bool:
     return isinstance(error, genai_errors.ClientError) and error.code == 429
 
 
-def _quota_violation_ids(error):
+def _quota_violation_ids(error: Exception) -> list[str]:
     """quotaId strings (e.g. "GenerateRequestsPerDayPerProjectPerModel-FreeTier")
     from a 429's structured google.rpc.QuotaFailure detail, if the response body
     included one. Empty list if not present/parseable."""
@@ -129,7 +136,7 @@ def _quota_violation_ids(error):
     inner = body.get("error", body)
     if not isinstance(inner, dict):
         return []
-    quota_ids = []
+    quota_ids: list[str] = []
     for detail in inner.get("details") or []:
         for violation in detail.get("violations") or []:
             quota_id = violation.get("quotaId")
@@ -138,7 +145,7 @@ def _quota_violation_ids(error):
     return quota_ids
 
 
-def is_daily_quota_exhausted(error):
+def is_daily_quota_exhausted(error: Exception) -> bool:
     """True only for a 429 that's actually a per-day quota limit -- as opposed
     to a per-minute (RPM) 429, which src.gemini_transcribe.RateLimiter's
     preemptive throttle should mostly prevent but can still slip through
@@ -153,7 +160,8 @@ def is_daily_quota_exhausted(error):
         return any("day" in quota_id.lower() for quota_id in quota_ids)
     # No structured QuotaFailure detail to inspect -- fall back to the
     # message text, which free-tier responses also spell out in words.
-    message = (error.message or "").lower()
+    # Narrowed to a ClientError by is_quota_exhausted above (cast is a runtime no-op).
+    message = (cast(genai_errors.ClientError, error).message or "").lower()
     if "per day" in message or "daily" in message:
         return True
     if "per minute" in message:
@@ -180,7 +188,7 @@ class ModelRotation:
     exhausted every later card skips straight past it instead of
     re-discovering that on every single call."""
 
-    def __init__(self, models):
+    def __init__(self, models: Iterable[str]) -> None:
         models = list(models)
         if not models:
             raise ValueError("models must not be empty")
@@ -188,10 +196,10 @@ class ModelRotation:
         self.index = 0
 
     @property
-    def current(self):
+    def current(self) -> str:
         return self.models[self.index]
 
-    def advance(self):
+    def advance(self) -> bool:
         if self.index >= len(self.models) - 1:
             return False
         self.index += 1
@@ -200,7 +208,8 @@ class ModelRotation:
         return True
 
 
-def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, prompt=PROMPT):
+def _call_with_fallback(client: genai.Client, image_bytes: bytes, model_rotation: ModelRotation,
+                        rate_limiter: RateLimiter | None, prompt: str = PROMPT) -> FieldValues:
     """Same return shape as call_gemini_once, plus "_model" recording which
     model in the rotation actually produced this sample -- self_consistency_scores
     only reads the field keys it knows about, so this rides along harmlessly
@@ -245,15 +254,16 @@ def _call_with_fallback(client, image_bytes, model_rotation, rate_limiter, promp
             time.sleep(RPM_BACKOFF_SECONDS)
 
 
-def _validate_rpm(rpm):
+def _validate_rpm(rpm: int) -> None:
     if rpm > MAX_SAFE_RPM:
         raise ValueError(f"rpm={rpm} exceeds MAX_SAFE_RPM={MAX_SAFE_RPM} -- Gemini free-tier "
                           "quota is 15 requests/minute per model, and this stays a safety "
                           "margin below that rather than equal to it")
 
 
-def run_batch(image_files, relevance_flags, output_path, n_samples, rpm, limit, api_key, models,
-              crops_images_dir=CROPS_IMAGES_DIR):
+def run_batch(image_files: list[str], relevance_flags: dict[str, bool], output_path: str,
+              n_samples: int, rpm: int, limit: int | None, api_key: str | None,
+              models: str | Iterable[str], crops_images_dir: str = CROPS_IMAGES_DIR) -> None:
     _validate_rpm(rpm)
     if isinstance(models, str):
         models = [models]
@@ -294,7 +304,7 @@ def run_batch(image_files, relevance_flags, output_path, n_samples, rpm, limit, 
             with open(os.path.join(crops_images_dir, crop_filename), "rb") as img_f:
                 image_bytes = img_f.read()
 
-            def call_fn(image_bytes=image_bytes):
+            def call_fn(image_bytes: bytes = image_bytes) -> FieldValues:
                 return _call_with_fallback(client, image_bytes, model_rotation, rate_limiter)
 
             try:
@@ -305,7 +315,7 @@ def run_batch(image_files, relevance_flags, output_path, n_samples, rpm, limit, 
                       "rerunning later", flush=True)
                 return
             models_used = sorted({sample.get("_model", "") for sample in samples} - {""})
-            row = {
+            row: dict[str, str | float] = {
                 "crop_filename": crop_filename,
                 "source_image_file": source_image_file,
                 "verbatimDate": scores["verbatimDate"][0],
@@ -326,8 +336,10 @@ def run_batch(image_files, relevance_flags, output_path, n_samples, rpm, limit, 
     print(f"[done] wrote {len(pending)} new rows to {output_path}", flush=True)
 
 
-def run_wholeimage_batch(image_files, merged_predictions, output_path, n_samples, rpm, limit, api_key,
-                          models, images_dir=WHOLEIMAGE_IMAGES_DIR):
+def run_wholeimage_batch(image_files: list[str], merged_predictions: dict[str, FieldScores],
+                         output_path: str, n_samples: int, rpm: int, limit: int | None,
+                         api_key: str | None, models: str | Iterable[str],
+                         images_dir: str = WHOLEIMAGE_IMAGES_DIR) -> None:
     """Whole-image fallback for specimens the per-card pass left both-fields
     MISSING -- same resumable shape as run_batch (skip-on-resume via
     already_done, flush-per-row, model rotation), but reads the original
@@ -371,7 +383,7 @@ def run_wholeimage_batch(image_files, merged_predictions, output_path, n_samples
             with open(os.path.join(images_dir, source_image_file), "rb") as img_f:
                 image_bytes = img_f.read()
 
-            def call_fn(image_bytes=image_bytes):
+            def call_fn(image_bytes: bytes = image_bytes) -> FieldValues:
                 return _call_with_fallback(client, image_bytes, model_rotation, rate_limiter,
                                             prompt=WHOLE_IMAGE_PROMPT)
 
@@ -383,7 +395,7 @@ def run_wholeimage_batch(image_files, merged_predictions, output_path, n_samples
                       "rerunning later", flush=True)
                 return
             models_used = sorted({sample.get("_model", "") for sample in samples} - {""})
-            row = {
+            row: dict[str, str | float] = {
                 "source_image_file": source_image_file,
                 "verbatimDate": scores["verbatimDate"][0],
                 "verbatimDate_confidence": scores["verbatimDate"][1],

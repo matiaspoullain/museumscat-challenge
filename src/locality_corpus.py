@@ -17,6 +17,7 @@ import collections
 import csv
 import json
 import os
+from collections.abc import Iterable, Mapping
 
 from src.metrics import edit_distance
 
@@ -38,16 +39,17 @@ MIN_LENGTH_FOR_FUZZY_MATCH = 5
 FUZZY_MAX_EDIT_DISTANCE = 2
 
 
-def _normalize(text):
+def _normalize(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
-def build_locality_corpus(paths=DEFAULT_SOURCES, field="verbatimLocality"):
+def build_locality_corpus(paths: Iterable[str] = DEFAULT_SOURCES,
+                          field: str = "verbatimLocality") -> collections.Counter[str]:
     """Counter of normalized locality segments across every raw sample (not
     just the modal/final prediction) in the given prediction CSVs. A missing
     source file (a pass that hasn't been run, e.g. test_wholeimage before the
     fallback pass) is skipped rather than raising."""
-    counts = collections.Counter()
+    counts: collections.Counter[str] = collections.Counter()
     for path in paths:
         if not os.path.exists(path):
             continue
@@ -65,7 +67,7 @@ def build_locality_corpus(paths=DEFAULT_SOURCES, field="verbatimLocality"):
     return counts
 
 
-def _fuzzy_support(norm, corpus):
+def _fuzzy_support(norm: str, corpus: Mapping[str, int]) -> int:
     if len(norm) < MIN_LENGTH_FOR_FUZZY_MATCH:
         return 0
     best = 0
@@ -77,7 +79,7 @@ def _fuzzy_support(norm, corpus):
     return best
 
 
-def corpus_support_score(text, corpus, max_count_for_saturation=10):
+def corpus_support_score(text: str, corpus: Mapping[str, int], max_count_for_saturation: int = 10) -> float:
     """[0,1]: 0 for a locality never seen (exactly or within edit distance 2)
     anywhere else in the corpus -- the single most common signature of a
     one-off misread -- rising to 1.0 once total corroborating evidence reaches

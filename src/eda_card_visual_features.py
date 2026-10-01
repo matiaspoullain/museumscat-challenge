@@ -21,6 +21,7 @@ Output:
 import csv
 import json
 import os
+from typing import cast
 
 import cv2
 import matplotlib
@@ -34,7 +35,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
-from src.classify_card_relevance import MATCHES_PATH, is_relevant_card, _load_predictions_by_card
+from src.classify_card_relevance import CardMatch, MATCHES_PATH, is_relevant_card, _load_predictions_by_card
 
 IMAGES_DIR = os.path.join("data", "processed", "card_crops", "images")
 OUT_DIR = os.path.join("tables_figures", "eda", "card_visual_features")
@@ -54,8 +55,13 @@ FEATURE_NAMES = [
     "edge_density", "border_ink_fraction", "interior_ink_fraction", "border_contrast",
 ]
 
+# One crop's visual features (extract_features: FEATURE_NAMES plus width/height),
+# extended in place by build_feature_table with "crop_filename" (str) and
+# "informative" (bool) -- hence the str in the value type.
+FeatureRow = dict[str, float | str]
 
-def extract_features(image_bgr):
+
+def extract_features(image_bgr: np.ndarray) -> FeatureRow:
     """Hand-crafted visual features for one card crop: color (hue/saturation/tint
     fraction), texture (sharpness, high-frequency FFT energy, edge density), a
     drawn-border proxy (ink fraction in the outer ring vs. the interior), and shape."""
@@ -103,14 +109,14 @@ def extract_features(image_bgr):
     }
 
 
-def _load_labeled_crops(matches):
+def _load_labeled_crops(matches: dict[str, CardMatch]) -> dict[str, bool]:
     """crop_filename -> True (informative/"matched") or False ("no_relevant_text"),
     skipping "skipped" entries (bad detections, not a relevance judgment)."""
     return {k: v["status"] == "matched" for k, v in matches.items() if v["status"] in ("matched", "no_relevant_text")}
 
 
-def build_feature_table(labels):
-    rows = []
+def build_feature_table(labels: dict[str, bool]) -> list[FeatureRow]:
+    rows: list[FeatureRow] = []
     for crop_filename, is_informative in labels.items():
         image_bgr = cv2.imread(os.path.join(IMAGES_DIR, crop_filename))
         if image_bgr is None:
@@ -122,7 +128,7 @@ def build_feature_table(labels):
     return rows
 
 
-def _write_features_csv(rows):
+def _write_features_csv(rows: list[FeatureRow]) -> None:
     fieldnames = ["crop_filename", "informative", "width", "height"] + FEATURE_NAMES
     with open(FEATURES_PATH, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -131,7 +137,7 @@ def _write_features_csv(rows):
             writer.writerow({k: row[k] for k in fieldnames})
 
 
-def _score(y_true, y_pred):
+def _score(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     return {
         "accuracy": accuracy_score(y_true, y_pred),
         "precision": precision_score(y_true, y_pred, zero_division=0),
@@ -139,7 +145,8 @@ def _score(y_true, y_pred):
     }
 
 
-def evaluate_classifiers(rows):
+def evaluate_classifiers(rows: list[FeatureRow],
+                         ) -> tuple[dict[str, dict[str, float]], list[tuple[str, float]]]:
     """Cross-validated accuracy/precision/recall for: the existing keyword
     classifier alone, each visual classifier alone, and a combined model that
     adds the keyword prediction as one more feature. All evaluated on the same
@@ -149,7 +156,7 @@ def evaluate_classifiers(rows):
 
     predictions_by_card = _load_predictions_by_card()
     keyword_pred = np.array(
-        [int(is_relevant_card(predictions_by_card.get(row["crop_filename"], []))) for row in rows]
+        [int(is_relevant_card(predictions_by_card.get(cast(str, row["crop_filename"]), []))) for row in rows]
     )
 
     cv = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=RANDOM_STATE)
@@ -176,7 +183,7 @@ def evaluate_classifiers(rows):
     return results, importances
 
 
-def plot_feature_distributions(rows, top_features, out_path):
+def plot_feature_distributions(rows: list[FeatureRow], top_features: list[str], out_path: str) -> None:
     fig, axes = plt.subplots(1, len(top_features), figsize=(4 * len(top_features), 4))
     if len(top_features) == 1:
         axes = [axes]
@@ -193,7 +200,8 @@ def plot_feature_distributions(rows, top_features, out_path):
     plt.close(fig)
 
 
-def _write_notes(out_path, n_informative, n_confound, results, importances, plot_filename):
+def _write_notes(out_path: str, n_informative: int, n_confound: int, results: dict[str, dict[str, float]],
+                 importances: list[tuple[str, float]], plot_filename: str) -> None:
     lines = [
         "# Card visual features EDA\n",
         f"\nLabeled crops: {n_informative} informative (\"matched\") vs {n_confound} confound "
@@ -218,7 +226,7 @@ def _write_notes(out_path, n_informative, n_confound, results, importances, plot
         f.writelines(lines)
 
 
-def main():
+def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     with open(MATCHES_PATH, encoding="utf-8") as f:
         matches = json.load(f)

@@ -6,11 +6,13 @@ classical and Gemini submissions pass the identical format checks.
 """
 
 import os
+from collections.abc import Callable
 
 import pandas as pd
 
 from src.card_relevance_visual import compute_relevance_flags_for_specimens
 from src.pipeline import load_manifest, load_predictions, run_pipeline
+from src.reconstruct_lines import Line
 
 REQUIRED_COLUMNS = [
     "image_file",
@@ -21,8 +23,8 @@ REQUIRED_COLUMNS = [
 ]
 
 
-def validate_submission(df, expected_image_files):
-    errors = []
+def validate_submission(df: pd.DataFrame, expected_image_files: set[str]) -> list[str]:
+    errors: list[str] = []
     missing_cols = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing_cols:
         errors.append(f"missing column(s): {missing_cols}")
@@ -40,9 +42,11 @@ def validate_submission(df, expected_image_files):
     return errors
 
 
-def build_submission_df(image_files, manifest_by_image, lines_by_crop, is_relevant=None):
+def build_submission_df(image_files: list[str], manifest_by_image: dict[str, list[str]],
+                        lines_by_crop: dict[str, list[Line]],
+                        is_relevant: Callable[[str], bool] | None = None) -> pd.DataFrame:
     predicted = run_pipeline(image_files, manifest_by_image, lines_by_crop, is_relevant=is_relevant)
-    rows = []
+    rows: list[dict[str, str | float]] = []
     for image_file in image_files:
         date_text, date_conf = predicted[image_file]["verbatimDate"]
         loc_text, loc_conf = predicted[image_file]["verbatimLocality"]
@@ -56,7 +60,7 @@ def build_submission_df(image_files, manifest_by_image, lines_by_crop, is_releva
     return pd.DataFrame(rows, columns=REQUIRED_COLUMNS)
 
 
-def generate_submission(manifest_path, predictions_path, csv_path, output_path):
+def generate_submission(manifest_path: str, predictions_path: str, csv_path: str, output_path: str) -> None:
     image_files = pd.read_csv(csv_path)["image_file"].tolist()
     manifest_by_image = load_manifest(manifest_path)
     lines_by_crop = load_predictions(predictions_path)

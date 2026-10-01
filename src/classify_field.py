@@ -37,7 +37,7 @@ CONFOUND_KEYWORDS = [
 ]
 
 
-def classify_field(text):
+def classify_field(text: str) -> str:
     """A bare single letter (with or without a trailing period, e.g. "J.")
     is treated as confound: it's either a collector's initial or OCR
     noise, never a meaningful date/locality on its own. Likewise a short

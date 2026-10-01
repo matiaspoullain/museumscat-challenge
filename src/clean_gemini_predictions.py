@@ -27,6 +27,8 @@ import html
 import re
 import unicodedata
 
+from src.merge_records import FieldScores
+
 # ö isn't a Danish letter (Danish special letters are æ/ø/å) -- any ö Gemini
 # emits is essentially always a misread ø.
 _OE_UMLAUT_TO_OSLASH = str.maketrans("öÖ", "øØ")
@@ -38,7 +40,7 @@ _TRAILING_PUNCTUATION = re.compile(r"[.,]+\s*$")
 _TRAILING_LOEV_SEGMENT = re.compile(r"\s*\|\s*(Mus\.\s*)?L[øo]v\.?\s*$", re.IGNORECASE)
 
 
-def sanitize_text(text):
+def sanitize_text(text: str) -> str:
     """Strips encoding noise that makes a visually-correct transcription score
     as wrong: HTML entities Gemini sometimes emits instead of the character
     ("B&#248;rstinge Mose"), decomposed Unicode ("Niva" + U+030A instead of
@@ -66,7 +68,7 @@ def sanitize_text(text):
     return text or "MISSING"
 
 
-def clean_locality(text):
+def clean_locality(text: str) -> str:
     if text == "MISSING":
         return text
     text = sanitize_text(text)
@@ -78,7 +80,7 @@ def clean_locality(text):
     return text or "MISSING"
 
 
-def clean_merged_predictions(merged):
+def clean_merged_predictions(merged: dict[str, FieldScores]) -> dict[str, FieldScores]:
     """Applies clean_locality to every specimen's verbatimLocality prediction
     in a src.calibrate_gemini_confidence.merge_predictions_by_specimen-shaped
     dict, and sanitize_text to its verbatimDate, leaving confidences untouched.
@@ -87,7 +89,7 @@ def clean_merged_predictions(merged):
     those are locality-specific (a trailing period is a real edit-distance
     error on a locality but free on a date, per
     src.metrics.normalize_date_punctuation)."""
-    cleaned = {}
+    cleaned: dict[str, FieldScores] = {}
     for image_file, fields in merged.items():
         date_text, date_confidence = fields["verbatimDate"]
         locality_text, locality_confidence = fields["verbatimLocality"]

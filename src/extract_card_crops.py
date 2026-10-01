@@ -37,6 +37,7 @@ import os
 
 import cv2
 import pandas as pd
+from segment_anything import SamAutomaticMaskGenerator
 from tqdm import tqdm
 
 from src.detect_cards import configure_threads, detect_cards, load_generator
@@ -52,8 +53,11 @@ PROCESSED_LOG_PATH = os.path.join(OUT_DIR, "processed.log")
 
 MANIFEST_COLUMNS = ["crop_filename", "source_image_file", "card_index", "x1", "y1", "x2", "y2"]
 
+# One manifest.csv row, in MANIFEST_COLUMNS order.
+ManifestRow = list[str | int]
 
-def _ordered_image_files():
+
+def _ordered_image_files() -> list[str]:
     """All images under IMAGES_DIR, train.csv rows first then test.csv rows
     -- the labeled 200-row dev set finishes early so the OCR step downstream
     can be validated against ground truth before the 3300-row test set is
@@ -69,27 +73,27 @@ def _ordered_image_files():
     return ordered + leftovers
 
 
-def _load_processed():
+def _load_processed() -> set[str]:
     if not os.path.exists(PROCESSED_LOG_PATH):
         return set()
     with open(PROCESSED_LOG_PATH, encoding="utf-8") as f:
         return {line.strip() for line in f if line.strip()}
 
 
-def _init_manifest():
+def _init_manifest() -> None:
     if not os.path.exists(MANIFEST_PATH):
         with open(MANIFEST_PATH, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow(MANIFEST_COLUMNS)
 
 
-def process_image(image_file, generator):
+def process_image(image_file: str, generator: SamAutomaticMaskGenerator) -> list[ManifestRow]:
     """Detect and save every card crop for one source image. Returns the
     manifest rows to write (empty list if zero cards were detected)."""
     crop = get_search_crop(os.path.join(IMAGES_DIR, image_file))
     boxes = detect_cards(crop, generator)
 
     stem = os.path.splitext(image_file)[0]
-    rows = []
+    rows: list[ManifestRow] = []
     for i, (x1, y1, x2, y2) in enumerate(boxes):
         card_crop = crop[y1:y2, x1:x2]
         crop_filename = f"{stem}_card{i:02d}.jpeg"
@@ -98,7 +102,7 @@ def process_image(image_file, generator):
     return rows
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None,
                          help="process only the first N not-yet-done images (for smoke-testing)")
